@@ -140,14 +140,20 @@ export const createApp = async (deps?: AppDeps) => {
       )
       .use(createConfigRoutes(settings))
       .use(createPostHogRoutes(fetchFn))
+      // The waitlist gates the consumer OTP sign-in funnel, which `AUTH_MODE`
+      // oidc/saml refuses outright (see `consumerOtpPaths` in auth/auth.ts). Mounting
+      // it there would leave an unauthenticated endpoint that writes rows and can
+      // never lead to a sign-in.
       .use(
-        createWaitlistRoutes({
-          database,
-          auth,
-          emailService: deps?.waitlistEmailService,
-          cooldownMs: deps?.otpCooldownMs,
-          ipRateLimit: createAuthIpRateLimit(database, ipRateLimitSettings),
-        }),
+        settings.authMode === 'consumer'
+          ? createWaitlistRoutes({
+              database,
+              auth,
+              emailService: deps?.waitlistEmailService,
+              cooldownMs: deps?.otpCooldownMs,
+              ipRateLimit: createAuthIpRateLimit(database, ipRateLimitSettings),
+            })
+          : new Elysia(),
       )
       .use(createPowerSyncRoutes(auth, settings, database))
       .use(createEncryptionRoutes(auth, database))

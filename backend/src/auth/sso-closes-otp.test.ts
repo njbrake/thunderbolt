@@ -62,7 +62,9 @@ describe('SSO mode closes the consumer OTP funnel', () => {
     return new Elysia({ prefix: '/v1' }).mount(createAuth(db).handler)
   }
 
-  const post = (app: Elysia, path: string, body: unknown) =>
+  // Typed by the handler it uses rather than `Elysia`, whose generics carry the
+  // mount prefix and would not accept the prefixed app built above.
+  const post = (app: { handle: (request: Request) => Promise<Response> }, path: string, body: unknown) =>
     app.handle(
       new Request(`http://localhost/v1/api/auth${path}`, {
         method: 'POST',
