@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { getTinfoilClient } from '@/ai/tinfoil-client'
+import { useConfigStore } from '@/api/config-store'
 import { fetch } from '@/lib/fetch'
 import { http } from '@/lib/http'
 import { normalizeOpenAiBaseUrl } from '@/lib/openai-base-url'
@@ -29,6 +30,27 @@ export type CatalogRequest = {
 export const thunderboltModelCatalog: AvailableModel[] = defaultModels
   .filter((model) => model.provider === 'thunderbolt')
   .map((model) => ({ id: model.model, name: model.name, supports_tools: model.toolUsage === 1 }))
+
+/**
+ * Thunderbolt-provider catalog for *this* deployment.
+ *
+ * The bundled list only knows the models shipped with the client, but a
+ * self-hosted backend can proxy more than that — anything its inference gateway
+ * serves (`THUNDERBOLT_INFERENCE_URL`) is advertised in `GET /config` with
+ * `provider: 'thunderbolt'`. Those ids cannot arrive through the defaults
+ * reconciler, which drops OTA models that have no bundled model profile, so read
+ * them straight off the config payload here instead.
+ *
+ * Falls back to the bundled catalogue when `/config` has not loaded or the
+ * deployment advertises nothing, so the picker is never empty.
+ */
+export const getThunderboltCatalog = (): AvailableModel[] => {
+  const advertised = useConfigStore.getState().config.defaults?.models?.data ?? []
+  const served = advertised
+    .filter((model) => model.provider === 'thunderbolt')
+    .map((model) => ({ id: model.model, name: model.name, supports_tools: model.toolUsage === 1 }))
+  return served.length > 0 ? served : thunderboltModelCatalog
+}
 
 /** Anthropic's models endpoint is not OpenAI-compatible: auth is `x-api-key` (not a
  *  bearer), a version header is mandatory, and rows carry `display_name`. Listing
@@ -103,7 +125,7 @@ const resolveCatalogEndpoint = ({ provider, apiKey, url }: CatalogRequest): stri
 /** Fetches a provider catalog only when explicitly requested by the caller. */
 export const fetchModelsForProvider = async ({ provider, apiKey, url }: CatalogRequest): Promise<AvailableModel[]> => {
   if (provider === 'thunderbolt') {
-    return thunderboltModelCatalog
+    return getThunderboltCatalog()
   }
   if (provider === 'anthropic') {
     return apiKey ? fetchAnthropicModels(apiKey) : []

@@ -2,9 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { describe, expect, it } from 'bun:test'
+import { useConfigStore } from '@/api/config-store'
+import { afterEach, describe, expect, it } from 'bun:test'
 import { defaultModels } from '@shared/defaults/models'
-import { canFetchCatalog, catalogRequestKey, isFetchableCatalogUrl, thunderboltModelCatalog } from './model-catalog'
+import {
+  canFetchCatalog,
+  catalogRequestKey,
+  getThunderboltCatalog,
+  isFetchableCatalogUrl,
+  thunderboltModelCatalog,
+} from './model-catalog'
 
 describe('model catalog policy', () => {
   it('derives Thunderbolt choices from shipped defaults', () => {
@@ -55,5 +62,50 @@ describe('model catalog policy', () => {
       expect(canFetchCatalog({ provider: 'thunderbolt' })).toBe(true)
       expect(canFetchCatalog({ provider: 'tinfoil' })).toBe(true)
     })
+  })
+})
+
+describe('getThunderboltCatalog', () => {
+  afterEach(() => {
+    useConfigStore.getState().updateConfig({} as never)
+  })
+
+  const advertise = (models: unknown[]) =>
+    useConfigStore.getState().updateConfig({ defaults: { models: { version: 99, data: models } } } as never)
+
+  it('falls back to the bundled catalogue before /config has loaded', () => {
+    expect(getThunderboltCatalog()).toEqual(thunderboltModelCatalog)
+  })
+
+  // A self-hosted backend proxying an inference gateway advertises ids the client
+  // was never built with, and the defaults reconciler drops them for lack of a
+  // bundled profile, so the catalogue has to read /config directly.
+  it('offers models the deployment advertises but the bundle does not know', () => {
+    advertise([
+      { provider: 'thunderbolt', model: 'kimi', name: 'Kimi', toolUsage: 1 },
+      { provider: 'thunderbolt', model: 'clawbolt-prod', name: 'Clawbolt', toolUsage: 1 },
+    ])
+
+    expect(getThunderboltCatalog().map((m) => m.id)).toEqual(['kimi', 'clawbolt-prod'])
+    expect(getThunderboltCatalog()[0].name).toBe('Kimi')
+  })
+
+  it('ignores advertised models belonging to other providers', () => {
+    advertise([
+      { provider: 'thunderbolt', model: 'kimi', name: 'Kimi', toolUsage: 1 },
+      { provider: 'tinfoil', model: 'glm-5-2', name: 'GLM 5.2', toolUsage: 1 },
+    ])
+
+    expect(getThunderboltCatalog().map((m) => m.id)).toEqual(['kimi'])
+  })
+
+  it('falls back when the deployment advertises no thunderbolt models', () => {
+    advertise([{ provider: 'tinfoil', model: 'glm-5-2', name: 'GLM 5.2', toolUsage: 1 }])
+    expect(getThunderboltCatalog()).toEqual(thunderboltModelCatalog)
+  })
+
+  it('carries tool support through from the advertised row', () => {
+    advertise([{ provider: 'thunderbolt', model: 'no-tools', name: 'No Tools', toolUsage: 0 }])
+    expect(getThunderboltCatalog()[0].supports_tools).toBe(false)
   })
 })
