@@ -46,8 +46,23 @@ Set any subset; the app exposes each provider whose key is present.
 | `EXA_API_KEY`                    | Exa search (for web-grounded retrieval)              |
 | `THUNDERBOLT_INFERENCE_URL`      | Custom OpenAI-compatible inference endpoint          |
 | `THUNDERBOLT_INFERENCE_API_KEY`  | Key for the custom inference endpoint                |
+| `THUNDERBOLT_INFERENCE_MODELS`   | Models that endpoint serves (see below)              |
 
 User-level keys (e.g. OpenAI, OpenRouter) are configured in the app itself, not as backend env vars. For local inference, point `THUNDERBOLT_INFERENCE_URL` at an Ollama or llama.cpp server.
+
+### Custom inference endpoint
+
+Include the `/v1` prefix in the URL, and name the models the endpoint serves as a comma-separated list of `id` or `id=Label` entries:
+
+```sh
+THUNDERBOLT_INFERENCE_URL=https://gateway.example.com/v1
+THUNDERBOLT_INFERENCE_API_KEY=sk-...
+THUNDERBOLT_INFERENCE_MODELS=llama-3.3-70b=Llama 3.3 70B,qwen-2.5-coder
+```
+
+Nothing routes to the endpoint until at least one model is listed. Listed models appear in the model picker automatically, with no client release needed, and requests are proxied through the backend, so the key stays server-side and the endpoint needs no CORS configuration. A model id that collides with a built-in one is ignored in favour of the built-in.
+
+Capabilities are advertised conservatively, because the endpoint cannot be introspected: no image input, the default context window, and no parallel tool calls.
 
 ## PowerSync
 

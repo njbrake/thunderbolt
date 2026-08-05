@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import type { Settings } from '@/config/settings'
+import { getGatewaySharedModels } from '@/inference/gateway-models'
 import { safeErrorHandler } from '@/middleware/error-handling'
 import { defaultModels, defaultModelsVersion } from '@shared/defaults/models'
 import { Elysia } from 'elysia'
@@ -17,6 +18,23 @@ import { Elysia } from 'elysia'
  * by comparing versions, so shipped defaults changes don't require a client
  * release. See "Reconciled defaults and version bumps" in AGENTS.md.
  */
+/**
+ * Shipped defaults plus any inference-gateway models this deployment configured.
+ *
+ * When the gateway adds models the payload has to out-version the client's
+ * bundled copy, or `pickDefaults` keeps the bundle and the extra models never
+ * appear in the picker. Bumping by one preserves that comparison across future
+ * upstream bumps, and appending (rather than replacing) keeps the id overlap
+ * `pickDefaults` requires before it will trust a server payload.
+ */
+const buildModelDefaults = (settings: Settings) => {
+  const gatewayModels = getGatewaySharedModels(settings)
+  if (gatewayModels.length === 0) {
+    return { version: defaultModelsVersion, data: defaultModels }
+  }
+  return { version: defaultModelsVersion + 1, data: [...defaultModels, ...gatewayModels] }
+}
+
 export const createConfigRoutes = (settings: Settings) =>
   new Elysia({ prefix: '/config' }).onError(safeErrorHandler).get('/', () => ({
     e2eeEnabled: settings.e2eeEnabled,
@@ -27,9 +45,6 @@ export const createConfigRoutes = (settings: Settings) =>
     // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
     minAppVersion: settings.minAppVersion || undefined,
     defaults: {
-      models: {
-        version: defaultModelsVersion,
-        data: defaultModels,
-      },
+      models: buildModelDefaults(settings),
     },
   }))

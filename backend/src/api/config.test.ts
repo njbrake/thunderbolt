@@ -60,5 +60,34 @@ describe('Config Routes', () => {
       expect(body.defaults.models.version).toBe(defaultModelsVersion)
       expect(body.defaults.models.data).toEqual(defaultModels)
     })
+
+    it('leaves models defaults untouched when no inference gateway is configured', async () => {
+      const { body } = await fetchConfig(createTestSettings({ thunderboltInferenceModels: 'ignored' }))
+      expect(body.defaults.models.version).toBe(defaultModelsVersion)
+      expect(body.defaults.models.data).toEqual(defaultModels)
+    })
+
+    it('appends inference gateway models and out-versions the bundled defaults', async () => {
+      const { body } = await fetchConfig(
+        createTestSettings({
+          thunderboltInferenceUrl: 'https://gateway.example.com/v1',
+          thunderboltInferenceApiKey: 'key',
+          thunderboltInferenceModels: 'llama-3.3-70b=Llama 3.3 70B',
+        }),
+      )
+
+      // A higher version is what makes the client prefer this payload over its
+      // bundled copy, and keeping the shipped defaults preserves the id overlap
+      // `pickDefaults` requires before it trusts the server.
+      expect(body.defaults.models.version).toBe(defaultModelsVersion + 1)
+      expect(body.defaults.models.data).toHaveLength(defaultModels.length + 1)
+      expect(body.defaults.models.data.slice(0, defaultModels.length)).toEqual(defaultModels)
+
+      const gatewayModel = body.defaults.models.data.at(-1)
+      expect(gatewayModel.name).toBe('Llama 3.3 70B')
+      expect(gatewayModel.model).toBe('llama-3.3-70b')
+      expect(gatewayModel.provider).toBe('thunderbolt')
+      expect(gatewayModel.url).toBeNull()
+    })
   })
 })
