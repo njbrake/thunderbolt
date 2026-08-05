@@ -93,7 +93,7 @@
   ],
   "users": [
     {
-      "id": "1d0fc1e0-7a60-4f6f-93b6-5f1d9aef7d64",
+      "id": "${KC_SEED_ID:1d0fc1e0-7a60-4f6f-93b6-5f1d9aef7d64}",
       "username": "${KC_SEED_USERNAME:demo}",
       "email": "${KC_SEED_EMAIL:demo@thunderbolt.io}",
       "firstName": "${KC_SEED_FIRST_NAME:Demo}",

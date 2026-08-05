@@ -38,13 +38,19 @@ Consumer mode uses [Better Auth](https://better-auth.com)'s magic-link flow by d
 
 `deploy/config/keycloak-realm.json` seeds one user, whose credentials come from the environment so a public deployment is not shipping a known login:
 
-| Variable             | Default               | Description                                        |
-| -------------------- | --------------------- | -------------------------------------------------- |
-| `KC_SEED_USERNAME`   | `demo`                | Username of the seeded account                     |
-| `KC_SEED_EMAIL`      | `demo@thunderbolt.io` | Its email, which is the Thunderbolt identity       |
-| `KC_SEED_FIRST_NAME` | `Demo`                | Given name                                         |
-| `KC_SEED_LAST_NAME`  | `User`                | Family name                                        |
-| `KC_SEED_PASSWORD`   | `demo`                | Its password (permanent, not a temporary one)      |
+| Variable             | Default                                | Description                                   |
+| -------------------- | -------------------------------------- | --------------------------------------------- |
+| `KC_SEED_USERNAME`   | `demo`                                 | Username of the seeded account                |
+| `KC_SEED_EMAIL`      | `demo@thunderbolt.io`                  | Its email, which is the Thunderbolt identity  |
+| `KC_SEED_FIRST_NAME` | `Demo`                                 | Given name                                    |
+| `KC_SEED_LAST_NAME`  | `User`                                 | Family name                                   |
+| `KC_SEED_PASSWORD`   | `demo`                                 | Its password (permanent, not a temporary one) |
+| `KC_SEED_ID`         | `1d0fc1e0-7a60-4f6f-93b6-5f1d9aef7d64` | Keycloak user UUID — see below                |
+
+`KC_SEED_ID` looks like an implementation detail and is not. It becomes the `sub` claim, which is the identity Better Auth links a Thunderbolt account to, so it decides whether a re-imported realm maps onto the **existing** Thunderbolt user or a new one:
+
+- Pinned (the default) means the account survives re-imports. That matters wherever Keycloak's storage is ephemeral, because every restart re-imports the realm and a freshly generated UUID would strand the previous account on every deploy.
+- Consequently, changing `KC_SEED_USERNAME`/`KC_SEED_EMAIL` alone does **not** rename the Thunderbolt account: the `sub` is unchanged, so the app keeps the profile it first saw (the shipped default's is "Demo User"). Change `KC_SEED_ID` too when you want a genuinely separate identity, and expect the old account's data to stay behind, orphaned.
 
 The realm also sets `registrationAllowed: false`. Leave it off whenever Keycloak is reachable from the internet: combined with the SSO/waitlist gap above, open registration lets any stranger who finds the Keycloak hostname mint an account and spend your provider keys. Turn it on per-realm in the admin console if you do want open sign-up.
 
