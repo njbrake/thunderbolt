@@ -77,10 +77,22 @@ server {
     #
     # `no-cache` (not `no-store`) still allows a conditional request, so the
     # common case stays a cheap 304 rather than a re-download.
+    # `no-store`, not `no-cache`, and that distinction is load-bearing when a CDN
+    # sits in front of this. Cloudflare's default configuration caches by file
+    # extension (`.js` is on that list) and rewrites the browser-facing
+    # `Cache-Control` to its own Browser Cache TTL — 4 hours on the free plan.
+    # Observed against a `no-cache` origin: `cf-cache-status: HIT`,
+    # `cache-control: max-age=14400`. Since the browser bypasses only its OWN
+    # cache when it re-checks a worker script (`updateViaCache: 'imports'`), an
+    # edge HIT still hands back a stale worker, delaying every client update by up
+    # to the edge TTL. `no-store` is the directive CDNs treat as "never hold this".
+    #
+    # A CDN configured to ignore origin headers outright still needs a rule of its
+    # own; see "Updating the client" in deploy/railway/README.md.
     location = /sw.js {
         include /etc/nginx/snippets/security-headers.conf;
         # nosemgrep: generic.nginx.security.header-redefinition.header-redefinition
-        add_header Cache-Control "no-cache" always;
+        add_header Cache-Control "no-store" always;
     }
 
     location = /index.html {
@@ -91,6 +103,11 @@ server {
 
     location = /manifest.webmanifest {
         include /etc/nginx/snippets/security-headers.conf;
+        # nginx's bundled mime.types has no `.webmanifest` entry, so this would
+        # otherwise be served as application/octet-stream. Chrome tolerates that;
+        # the spec wants application/manifest+json, and iOS is the platform where
+        # installability matters most here.
+        types { } default_type application/manifest+json;
         # nosemgrep: generic.nginx.security.header-redefinition.header-redefinition
         add_header Cache-Control "no-cache" always;
     }

@@ -261,10 +261,35 @@ in Settings → About → Updates. Checks run hourly and on every return to the
 foreground, which is what matters for a home screen app that gets resumed rather
 than relaunched.
 
-`nginx.conf.template` marks `sw.js`, `index.html`, and `manifest.webmanifest`
-`Cache-Control: no-cache` for this to work at all. A cached `sw.js` pins a client to
-an old build indefinitely, and a cached `index.html` is how a phone keeps loading
-last week's bundle after a deploy.
+`nginx.conf.template` marks `index.html` and `manifest.webmanifest`
+`Cache-Control: no-cache`, and `sw.js` `no-store`, for this to work at all. A cached
+`sw.js` pins a client to an old build, and a cached `index.html` is how a phone
+keeps loading last week's bundle after a deploy.
+
+**If you front this with Cloudflare, add a cache rule for `/sw.js`.** Cloudflare
+caches by file extension (`.js` is on its default list) and rewrites the
+browser-facing `Cache-Control` to its own Browser Cache TTL, 4 hours on the free
+plan. Measured on this deployment against a `no-cache` origin:
+
+```
+$ curl -sD - -o /dev/null https://tb.natebrake.com/sw.js | grep -i 'cache\|age'
+age: 675
+cache-control: max-age=14400
+cf-cache-status: HIT
+```
+
+That is an edge HIT serving a stale worker. When a browser re-checks a worker
+script it bypasses only its *own* HTTP cache (`updateViaCache` defaults to
+`'imports'`), so an edge hit still returns the old bytes and delays every client's
+update by up to the edge TTL. The origin now sends `no-store`, which CDNs treat as
+"never hold this", but a zone configured to ignore origin headers needs its own
+rule:
+
+- Caching → Cache Rules → **If** URI Path equals `/sw.js` → **Then** Bypass cache.
+- Optionally set Browser Cache TTL to "Respect Existing Headers" zone-wide.
+
+This is not Cloudflare-specific. Any CDN that caches `.js` by extension will do the
+same thing, and it is the most likely reason a deploy appears not to reach a phone.
 
 ## Notes and caveats
 
