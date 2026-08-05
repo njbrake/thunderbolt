@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { Loader2, X } from 'lucide-react'
+import { Loader2, RefreshCw, X } from 'lucide-react'
 import type { UseFormReturn } from 'react-hook-form'
 
 import { Button } from '@/components/ui/button'
@@ -171,7 +171,26 @@ export const AddModelForm = ({
             name="model"
             render={() => (
               <FormItem className="flex flex-col">
-                <FormLabel>Model</FormLabel>
+                <div className="flex items-center justify-between gap-2">
+                  <FormLabel>Model</FormLabel>
+                  {/* Re-lists what the provider serves right now. Invalidating is
+                      all that is needed: `useAutoCatalogFetch` re-fires as soon as
+                      the cached request key is dropped. Useful for the Thunderbolt
+                      provider in particular, where the list comes from the
+                      deployment's inference gateway and can gain models without
+                      any client release. */}
+                  {providerAutoFetchesCatalog(provider) && (
+                    <button
+                      type="button"
+                      onClick={onCatalogInvalidated}
+                      disabled={isLoadingCatalog}
+                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${isLoadingCatalog ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </button>
+                  )}
+                </div>
                 <FormControl>
                   <Combobox
                     items={modelItems}

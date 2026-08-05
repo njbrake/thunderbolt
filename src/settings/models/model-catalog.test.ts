@@ -3,11 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { useConfigStore } from '@/api/config-store'
-import { afterEach, describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { defaultModels } from '@shared/defaults/models'
 import {
   canFetchCatalog,
   catalogRequestKey,
+  fetchThunderboltCatalog,
   getThunderboltCatalog,
   isFetchableCatalogUrl,
   thunderboltModelCatalog,
@@ -107,5 +108,39 @@ describe('getThunderboltCatalog', () => {
   it('carries tool support through from the advertised row', () => {
     advertise([{ provider: 'thunderbolt', model: 'no-tools', name: 'No Tools', toolUsage: 0 }])
     expect(getThunderboltCatalog()[0].supports_tools).toBe(false)
+  })
+})
+
+describe('fetchThunderboltCatalog', () => {
+  afterEach(() => {
+    useConfigStore.getState().updateConfig({} as never)
+  })
+
+  const advertise = (models: unknown[]) =>
+    useConfigStore.getState().updateConfig({ defaults: { models: { version: 99, data: models } } } as never)
+
+  // The config store is persisted and otherwise only filled during boot, so a
+  // resumed phone would keep offering whatever the gateway served on its last
+  // cold start. Opening the picker has to go back to the network.
+  it('refreshes /config before reading the served list', async () => {
+    const refresh = mock(async () => {
+      advertise([{ provider: 'thunderbolt', model: 'freshly-added', name: 'Fresh', toolUsage: 1 }])
+    })
+
+    const models = await fetchThunderboltCatalog(refresh)
+
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(models.map((m) => m.id)).toEqual(['freshly-added'])
+  })
+
+  it('keeps the previously known list when the refresh brings nothing new', async () => {
+    advertise([{ provider: 'thunderbolt', model: 'kimi', name: 'Kimi', toolUsage: 1 }])
+
+    // `fetchConfig` swallows its own failures and leaves the persisted config in
+    // place, so an offline refresh must degrade to the last known list rather
+    // than emptying the picker.
+    const models = await fetchThunderboltCatalog(async () => undefined)
+
+    expect(models.map((m) => m.id)).toEqual(['kimi'])
   })
 })
