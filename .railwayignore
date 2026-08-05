@@ -1,0 +1,17 @@
+# Build context exclusions for `railway up`. Railway honours this file in place
+# of .gitignore, so anything large that .gitignore already covers has to be
+# repeated here or it gets uploaded.
+#
+# .claude is listed both because it is agent tooling no Dockerfile copies, and
+# because .claude/commands/thunderbot is a dangling symlink that aborts
+# `railway up` indexing with an "IO error ... No such file or directory".
+.claude
+.thunderbot
+
+node_modules
+dist
+dist-isolation
+target
+src-tauri/target
+src-tauri/gen
+.venv

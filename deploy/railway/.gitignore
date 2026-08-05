@@ -1,0 +1,4 @@
+# Generated credentials for a Railway stack (Postgres, Keycloak admin, OIDC
+# client secret, Better Auth secret, PowerSync JWT secret). Written by setup.sh
+# on first run and reused on subsequent runs. Never commit this.
+.railway-secrets.env
