@@ -95,6 +95,15 @@ fi
 KC_SEED_USERNAME="${KC_SEED_USERNAME:-owner}"
 KC_SEED_EMAIL="${KC_SEED_EMAIL:-owner@example.com}"
 
+# Which proxy header carries the real client IP. Rate limiting keys on it, so this
+# is not cosmetic: left empty behind a CDN, every request appears to come from a
+# handful of edge IPs and all users share one bucket. Set it to the edge you
+# actually terminate on, and ONLY that — trusting a header your edge does not
+# overwrite lets a client spoof its IP and bypass the limits entirely.
+# Railway custom domains are commonly fronted by Cloudflare, hence the default;
+# set TRUSTED_PROXY="" if you serve *.up.railway.app directly.
+TRUSTED_PROXY="${TRUSTED_PROXY-cloudflare}"
+
 # PowerSync verifies the JWT the backend signs, keyed by kid. `k` must be
 # base64 of the same secret the backend uses (deploy/config/powersync-config.yaml).
 PS_JWT_KEY_BASE64="$(printf '%s' "$POWERSYNC_JWT_SECRET" | base64 | tr -d '\n')"
@@ -304,7 +313,8 @@ setvar "$SVC_BE" \
   "PORT=8000" \
   "AUTH_MODE=oidc" \
   "WAITLIST_ENABLED=false" \
-  "RATE_LIMIT_ENABLED=false" \
+  "RATE_LIMIT_ENABLED=true" \
+  "TRUSTED_PROXY=$TRUSTED_PROXY" \
   "DATABASE_DRIVER=postgres" \
   "DATABASE_URL=postgresql://postgres:$POSTGRES_PASSWORD@$SVC_PG.railway.internal:5432/postgres" \
   "OIDC_ISSUER=$KC_URL/realms/thunderbolt" \
