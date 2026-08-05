@@ -157,6 +157,14 @@ export const createAuth = (database: typeof DbType, emailDeps: AuthEmailDeps = {
       schema,
     }),
     trustedOrigins,
+    // Land OAuth/SSO failures on the app, not on the API. Better Auth otherwise
+    // falls back to `${baseURL}/error` (see better-auth's oauth2/state.mjs), and
+    // baseURL is the backend, which serves no such route — so a recoverable error
+    // like an expired or stale `state` cookie renders a bare "NOT_FOUND" on the
+    // API domain instead of returning the user to a page that can retry.
+    // Only observable when the app and API are on separate origins; where one
+    // origin proxies both, the SPA's catch-all already absorbed this.
+    onAPIError: { errorURL: settings.appUrl },
     ...(ssoEnabled && {
       account: {
         accountLinking: {
