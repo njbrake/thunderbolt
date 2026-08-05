@@ -75,10 +75,25 @@ OIDC_CLIENT_SECRET=$(openssl rand -hex 24)
 BETTER_AUTH_SECRET=$(openssl rand -hex 32)
 POWERSYNC_JWT_SECRET=$(openssl rand -hex 24)
 KC_BOOTSTRAP_ADMIN_PASSWORD=$(openssl rand -hex 12)
+KC_SEED_PASSWORD=$(openssl rand -hex 16)
 EOF
 fi
 # shellcheck disable=SC1090
 . "$SECRETS_FILE"
+
+# The realm's seeded user. Upstream's realm JSON ships demo@thunderbolt.io/demo;
+# these override it through Keycloak's ${VAR:default} substitution so a public
+# deploy never has a guessable login. It is also the ONLY account that can sign
+# in: the realm sets registrationAllowed=false, and in AUTH_MODE=oidc the backend
+# applies no waitlist gate to SSO logins (the waitlist only guards the consumer
+# OTP path), so an open realm would hand any stranger who finds the Keycloak
+# hostname a Thunderbolt account with access to this deployment's provider keys.
+#
+# Realm import is one-shot — Keycloak reads the JSON only on the first boot of an
+# empty database. Changing these on an existing stack does nothing; edit the user
+# in the admin console, or delete the keycloak volume to re-seed from scratch.
+KC_SEED_USERNAME="${KC_SEED_USERNAME:-owner}"
+KC_SEED_EMAIL="${KC_SEED_EMAIL:-owner@example.com}"
 
 # PowerSync verifies the JWT the backend signs, keyed by kid. `k` must be
 # base64 of the same secret the backend uses (deploy/config/powersync-config.yaml).
@@ -246,6 +261,9 @@ setvar "$SVC_KC" \
   "KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true" \
   "KC_BOOTSTRAP_ADMIN_USERNAME=admin" \
   "KC_BOOTSTRAP_ADMIN_PASSWORD=$KC_BOOTSTRAP_ADMIN_PASSWORD" \
+  "KC_SEED_USERNAME=$KC_SEED_USERNAME" \
+  "KC_SEED_EMAIL=$KC_SEED_EMAIL" \
+  "KC_SEED_PASSWORD=$KC_SEED_PASSWORD" \
   "OIDC_REDIRECT_URI=$API_URL/v1/api/auth/sso/callback/sso" \
   "OIDC_WEB_ORIGIN=$APP_URL" \
   "OIDC_CLIENT_SECRET=$OIDC_CLIENT_SECRET"
@@ -354,8 +372,11 @@ Stack provisioned.
   Keycloak   $KC_URL  (admin console at /admin)
   PowerSync  $PS_URL
 
-Demo user:  demo@thunderbolt.io / demo
+Sign in as:  $KC_SEED_EMAIL  (password is in $SECRETS_FILE, as KC_SEED_PASSWORD)
 Keycloak admin user: admin  (password is in $SECRETS_FILE)
+
+Self-registration is off, so this is the only account that can sign in. Add more
+from the Keycloak admin console.
 
 $SECRETS_FILE holds every generated credential. It is gitignored. Keep it if you
 want re-runs to preserve the stack; delete it and the next run mints new secrets,

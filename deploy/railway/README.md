@@ -188,6 +188,84 @@ Neither public service is unauthenticated: PowerSync only accepts JWTs signed wi
 Keycloak's admin console at `/auth/admin`, which is reachable with the bootstrap admin
 password. Put it behind your edge (e.g. Cloudflare Access) or set `KC_HOSTNAME_ADMIN`.
 
+## Who can sign in
+
+**Read this before pointing the deployment at real provider keys.**
+
+Keycloak is on the public internet, and upstream's realm ships
+`registrationAllowed: true` with a `demo@thunderbolt.io` / `demo` user. Two things
+make that combination worse than it first looks:
+
+- In `AUTH_MODE=oidc` the backend applies **no waitlist gate to SSO logins**. The
+  waitlist only guards the consumer OTP path (`backend/src/auth/auth.ts`), so
+  `WAITLIST_ENABLED=true` does nothing here.
+- Thunderbolt has no admin/role concept and no per-user quota. Every account is
+  equal and can use every model the backend proxies.
+
+So a stranger who finds the Keycloak hostname can self-register and spend your
+`THUNDERBOLT_INFERENCE_API_KEY`. This deployment path therefore closes
+registration in `deploy/config/keycloak-realm.json` and drives the seeded user
+from the environment:
+
+| Variable            | Default               | Purpose                             |
+| ------------------- | --------------------- | ----------------------------------- |
+| `KC_SEED_USERNAME`  | `demo`                | Username of the one seeded account   |
+| `KC_SEED_EMAIL`     | `demo@thunderbolt.io` | Its email — the Thunderbolt identity |
+| `KC_SEED_PASSWORD`  | `demo`                | Its password                         |
+
+`setup.sh` generates `KC_SEED_PASSWORD` into `.railway-secrets.env` and sets all
+three, so a fresh Railway stack never has a guessable login. The defaults are only
+what upstream's Compose/local-dev flow expects.
+
+**Realm import is one-shot.** Keycloak reads the JSON only on the first boot of an
+empty database, so changing these on a running stack does nothing. To fix an
+already-imported realm, use the admin console (or the admin REST API):
+
+- Realm settings → Login → turn **User registration** off.
+- Users → create your real account, then delete `demo`.
+
+Adding more people later is a Keycloak task, not a Thunderbolt one: create the user
+in the realm and they can sign in.
+
+## Install it as an app
+
+The web build is an installable PWA, which is the only way to get Thunderbolt onto
+a phone home screen without shipping through an app store.
+
+- **iOS/iPadOS:** Safari → Share → **Add to Home Screen**. It must be Safari;
+  other iOS browsers cannot install to the home screen. A home screen app gets its
+  own storage and cookie jar, so the first launch asks you to sign in again even if
+  Safari is already signed in.
+- **Android:** Chrome offers **Install app** in the menu (or an install prompt).
+- **Desktop:** Chrome/Edge show an install button in the address bar.
+
+Two properties of this deployment matter for it:
+
+- The service worker precaches the **app shell only** (~2MB: `index.html`, the entry
+  chunk, the main stylesheet). A `**/*` precache would be 31MB, because `dist`
+  carries ~17MB of wa-sqlite/ACP wasm (emitted twice) plus multi-MB lazy chunks.
+  Consequence: this is not a work-offline app. It needs the backend for auth and
+  inference anyway.
+- Cross-origin isolation survives it. The app needs `crossOriginIsolated` for
+  OPFS/SharedArrayBuffer, and cached navigation responses keep the COOP/COEP
+  headers nginx set, so serving the shell from the worker does not break it.
+
+### Updating the client
+
+Static hosting gives a browser no version to compare, so the service worker is the
+update channel: it re-fetches `/sw.js`, whose precache manifest names every hashed
+asset, so a changed manifest means a new deploy. A new build **installs but waits** —
+swapping chunks under a live React tree would break the running session. The user
+gets an "A new version is available" card with **Reload**, and the same control sits
+in Settings → About → Updates. Checks run hourly and on every return to the
+foreground, which is what matters for a home screen app that gets resumed rather
+than relaunched.
+
+`nginx.conf.template` marks `sw.js`, `index.html`, and `manifest.webmanifest`
+`Cache-Control: no-cache` for this to work at all. A cached `sw.js` pins a client to
+an old build indefinitely, and a cached `index.html` is how a phone keeps loading
+last week's bundle after a deploy.
+
 ## Notes and caveats
 
 - **Keycloak runs in `start-dev` mode** with a file-backed H2 database, inherited from
@@ -205,8 +283,14 @@ password. Put it behind your edge (e.g. Cloudflare Access) or set `KC_HOSTNAME_A
      to work around.
 
   Persisting the dev-mode H2 file is not worth either problem: `--import-realm`
-  rebuilds the realm, the OIDC client, and the demo user from
+  rebuilds the realm, the OIDC client, and the seeded user from
   `deploy/config/keycloak-realm.json` on every boot.
+
+  The flip side, worth knowing before you edit a user by hand: with no volume the
+  H2 file lives in the container filesystem, so **users you create in the admin
+  console are lost on redeploy** and the realm returns to whatever
+  `KC_SEED_*` describes. Treat the realm JSON plus those variables as the source of
+  truth, not the console.
 
 - **`PGDATA` is a subdirectory** of the mount (`/var/lib/postgresql/data/pgdata`).
   Railway volumes mount with a `lost+found` entry and `initdb` refuses a non-empty

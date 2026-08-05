@@ -67,10 +67,10 @@ data:
       "realm": "thunderbolt",
       "enabled": true,
       "sslRequired": "external",
-      "registrationAllowed": true,
+      "registrationAllowed": {{ .Values.keycloak.registrationAllowed }},
       "loginWithEmailAllowed": true,
       "duplicateEmailsAllowed": false,
-      "resetPasswordAllowed": true,
+      "resetPasswordAllowed": {{ .Values.keycloak.resetPasswordAllowed }},
       "editUsernameAllowed": false,
       "bruteForceProtected": true,
       "clients": [
