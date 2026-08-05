@@ -28,6 +28,62 @@ consequences:
   makes Keycloak reject sign-in with `Invalid parameter: redirect_uri`, since Better
   Auth would then advertise a callback on an origin the realm does not register.
 
+## Put the app and the API on one registrable domain
+
+Strongly recommended, and the single thing most likely to cost you an afternoon if you
+skip it. Railway's generated hostnames look adjacent but are not:
+`frontend-production-xxxx.up.railway.app` and `backend-production-yyyy.up.railway.app`
+are **different sites**, because `up.railway.app` is on the Public Suffix List.
+
+The consequence is that the OAuth `state` cookie is set on a cross-site request during
+sign-in, and browsers are entitled to drop it. Firefox logs
+
+```
+Cookie "__Secure-better-auth.state" has been rejected because it is in a cross-site
+context and its "SameSite" is "Lax" or "Strict".
+```
+
+and Safari blocks cross-site cookies outright. Better Auth then fails the callback with
+`state_security_mismatch` _after_ the IdP has already authenticated the user, so
+sign-in dies with no obvious cause.
+
+`backend/src/auth/auth.ts` works around this by setting `account.skipStateCookieCheck`
+when `appUrl` and `betterAuthUrl` differ in origin, which is safe because the
+authoritative state is a database row. But the cleaner answer is to not be cross-site
+at all: put both services under one domain you control, e.g.
+
+| Service    | Custom domain        |
+| ---------- | -------------------- |
+| `frontend` | `tb.example.com`     |
+| `backend`  | `tb-api.example.com` |
+
+Those share the `example.com` registrable domain, so the cookie is same-site and no
+browser policy touches it. Keycloak and PowerSync do not need to join them: they are
+reached by top-level redirects and an authenticated sync stream respectively, and share
+no cookies with the app.
+
+### Custom domains on Railway
+
+```bash
+railway domain tb.example.com     --service frontend --port 80
+railway domain tb-api.example.com --service backend  --port 8000
+```
+
+Each prints a `CNAME` plus a `_railway-verify.<sub>` `TXT` record. Add all of them.
+
+**Cloudflare's proxy (orange cloud) is fine.** Ownership is proven by the TXT record,
+so Railway does not need to see its own CNAME target. Expect `dig CNAME` to return
+nothing and `dig A` to return Cloudflare addresses even when everything is correct —
+that is Cloudflare answering, not a misconfiguration. Verify with an actual request
+instead: the app host should return HTTP 200 and the API host `404 NOT_FOUND` (the
+backend serves no `/` route), both carrying `x-railway-request-id`.
+
+After changing hostnames, update `APP_URL`, `BETTER_AUTH_URL`, `CORS_ORIGINS`,
+`TRUSTED_ORIGINS` on `backend`, `OIDC_REDIRECT_URI` and `OIDC_WEB_ORIGIN` on
+`keycloak`, and rebuild `frontend` for its baked-in API URL. Then **delete the old
+generated domains**: they keep serving the rebuilt bundle, whose API calls are now
+cross-site and CORS-rejected, so a stale bookmark reproduces the original bug exactly.
+
 Everything else is stock. No application code changes are required, because:
 
 - `frontend.Dockerfile` already declares `ARG VITE_THUNDERBOLT_CLOUD_URL` and
@@ -112,6 +168,26 @@ so renaming a service means updating the URIs in `setup.sh`.
 
 Postgres has no public domain. Do not add one.
 
+### Why three services are public
+
+Worth stating, because "lock down everything except the frontend" is the natural
+instinct and two of these cannot be locked down:
+
+- **`keycloak` must be public.** The browser is redirected to it to sign in, and
+  `OIDC_ISSUER` is the value Keycloak stamps into token `iss` claims, which Better Auth
+  validates. It is an identity provider; being reachable is the job.
+- **`powersync` must be public.** `backend/src/api/powersync.ts` returns
+  `powerSyncUrl` in the `/v1/powersync/token` response and the client uses it as the
+  sync stream `endpoint` (`src/db/powersync/connector.ts`), so the browser connects
+  directly. An internal `.railway.internal` name does not resolve in a browser.
+- **`postgres` is private and must stay that way.** Nothing outside the project needs
+  it, and Railway does not expose TCP without an explicit proxy.
+
+Neither public service is unauthenticated: PowerSync only accepts JWTs signed with
+`POWERSYNC_JWT_SECRET` and checks the audience. The one thing worth restricting is
+Keycloak's admin console at `/auth/admin`, which is reachable with the bootstrap admin
+password. Put it behind your edge (e.g. Cloudflare Access) or set `KC_HOSTNAME_ADMIN`.
+
 ## Notes and caveats
 
 - **Keycloak runs in `start-dev` mode** with a file-backed H2 database, inherited from
@@ -143,11 +219,46 @@ Postgres has no public domain. Do not add one.
   PowerSync's storage points at the in-project Postgres, not a managed instance.
 - `sslmode: disable` in `powersync-config.yaml` is correct here. Railway's private
   network is Wireguard-encrypted and this Postgres serves no TLS.
-- **Inference.** `THUNDERBOLT_INFERENCE_URL` is not currently read by the backend, so
-  a custom OpenAI-compatible gateway is configured per-user in the app instead, as a
-  `custom` provider. Backend provider keys (`ANTHROPIC_API_KEY`, `FIREWORKS_API_KEY`,
-  `MISTRAL_API_KEY`) can be added as `backend` service variables if you want the
-  server-side AI features active.
+- **Inference.** Point `THUNDERBOLT_INFERENCE_URL` at an OpenAI-compatible gateway and
+  list its models in `THUNDERBOLT_INFERENCE_MODELS`; see
+  `docs/self-hosting/configuration.md`. Requests are proxied through the backend, so the
+  gateway key stays server-side and the gateway needs no CORS configuration. Hosted
+  provider keys (`ANTHROPIC_API_KEY`, `FIREWORKS_API_KEY`, `MISTRAL_API_KEY`) work as
+  `backend` variables too.
+- **`BETTER_AUTH_URL` is the API origin, `APP_URL` is the app.** They are equal in the
+  Compose and ALB setups only because one origin proxies both. See the same-site section
+  above.
+
+## Troubleshooting
+
+**Sign-in returns to a bare `NOT_FOUND`.** Better Auth resolves its error redirect as
+`onAPIError.errorURL || ${baseURL}/error`, and `baseURL` is the API, which serves no
+such route. `backend/src/auth/auth.ts` sets `errorURL` to `APP_URL` so failures land on
+the app; if you see this, that setting is missing or `APP_URL` is wrong.
+
+**Keycloak rejects sign-in with `Invalid parameter: redirect_uri`.** The realm registers
+`OIDC_REDIRECT_URI`, which must be on the **backend** origin
+(`<api>/v1/api/auth/sso/callback/sso`), while `OIDC_WEB_ORIGIN` is the frontend. If
+`BETTER_AUTH_URL` points at the frontend, Better Auth advertises a callback the realm
+does not know.
+
+**The app hangs on the loading spinner.** Read the `[init] step...` lines in the browser
+console and find the last one printed. Boot runs
+`start → step0_5_storage_check → step1_create_app_dir → step2_initialize_database →
+step2b_db_ready → … → step8_initialize_posthog → complete`. Stopping at
+`step2b_db_ready` means the WASM/OPFS database never opened; that step has no timeout,
+so it spins rather than erroring. The usual cause is stale or inaccessible site storage
+for that origin. Clearing **cookies is not enough** — OPFS survives it. Remove the
+origin under Cookies and Site Data, or test in a fresh browser profile.
+
+**Keycloak's account console shows "Something went wrong" with 401s.** Cosmetic and
+unrelated to the app. `deploy/config/keycloak-realm.json` defines no `defaultRole` and
+gives the demo user no role mappings, so it has none of the `account` client roles the
+account REST API requires. Thunderbolt sign-in is unaffected: it consumes ID token
+claims and never calls that API.
+
+**A stale generated domain "works" but nothing loads.** See the note about deleting old
+domains after a hostname change.
 
 ## Teardown
 
