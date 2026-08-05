@@ -337,6 +337,15 @@ same thing, and it is the most likely reason a deploy appears not to reach a pho
 - **`BETTER_AUTH_URL` is the API origin, `APP_URL` is the app.** They are equal in the
   Compose and ALB setups only because one origin proxies both. See the same-site section
   above.
+- **The frontend's own `/v1/` proxy is dead here, and that is expected.** Requesting
+  `https://<app-domain>/v1/anything` returns 502. Two reasons, both fine: the app
+  never uses it (`VITE_THUNDERBOLT_CLOUD_URL` is the absolute API origin, which the
+  same-site split requires), and `nginx.conf.template` is written for Compose —
+  `THUNDERBOLT_BACKEND_HOST` defaults to `backend` and the `resolver 127.0.0.11` is
+  Docker's embedded DNS, neither of which exists on Railway (the private name would
+  be `backend.railway.internal`). Do not debug the app against a relative `/v1/`
+  URL on this deployment; use `https://<api-domain>/v1/...`. It is an easy trap:
+  the 502 looks like a backend outage when the backend is healthy.
 
 ## Troubleshooting
 
