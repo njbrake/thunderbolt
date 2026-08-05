@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import type { Settings } from '@/config/settings'
-import { getGatewaySharedModels } from '@/inference/gateway-models'
+import { ensureGatewayModels, getGatewaySharedModels } from '@/inference/gateway-models'
 import { safeErrorHandler } from '@/middleware/error-handling'
 import { defaultModels, defaultModelsVersion } from '@shared/defaults/models'
 import { Elysia } from 'elysia'
@@ -27,7 +27,11 @@ import { Elysia } from 'elysia'
  * upstream bumps, and appending (rather than replacing) keeps the id overlap
  * `pickDefaults` requires before it will trust a server payload.
  */
-const buildModelDefaults = (settings: Settings) => {
+const buildModelDefaults = async (settings: Settings) => {
+  // Refresh discovery here rather than at boot: /config is fetched on every app
+  // start, so the catalogue is picked up without a redeploy, and a warm cache
+  // makes this a no-op.
+  await ensureGatewayModels(settings)
   const gatewayModels = getGatewaySharedModels(settings)
   if (gatewayModels.length === 0) {
     return { version: defaultModelsVersion, data: defaultModels }
@@ -36,7 +40,7 @@ const buildModelDefaults = (settings: Settings) => {
 }
 
 export const createConfigRoutes = (settings: Settings) =>
-  new Elysia({ prefix: '/config' }).onError(safeErrorHandler).get('/', () => ({
+  new Elysia({ prefix: '/config' }).onError(safeErrorHandler).get('/', async () => ({
     e2eeEnabled: settings.e2eeEnabled,
     // Inverted so the env reads as an opt-in switch ("disable") while the wire
     // contract reads as a positive capability ("enabled").
@@ -45,6 +49,6 @@ export const createConfigRoutes = (settings: Settings) =>
     // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
     minAppVersion: settings.minAppVersion || undefined,
     defaults: {
-      models: buildModelDefaults(settings),
+      models: await buildModelDefaults(settings),
     },
   }))

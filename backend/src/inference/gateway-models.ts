@@ -52,8 +52,11 @@ export type GatewayModelSpec = {
 /**
  * Parse `THUNDERBOLT_INFERENCE_MODELS`: a comma-separated list of `id` or
  * `id=Label` entries, e.g. `llama-3.3-70b=Llama 3.3 70B,qwen-2.5-coder`.
- * Blank and malformed entries are skipped rather than throwing, so one typo
- * cannot stop the server from booting.
+ *
+ * Optional. When set it acts as an allowlist over what the gateway advertises
+ * (and a place to give models nicer labels); when empty, every model the gateway
+ * reports is exposed. Blank and malformed entries are skipped rather than
+ * throwing, so one typo cannot stop the server from booting.
  */
 export const parseGatewayModelSpecs = (raw: string): GatewayModelSpec[] => {
   const seen = new Set<string>()
@@ -76,13 +79,120 @@ export const parseGatewayModelSpecs = (raw: string): GatewayModelSpec[] => {
 /** Settings this module reads. Passed explicitly rather than pulled from
  *  `getSettings()` so the config route stays injectable, matching the
  *  `getCorsOriginsList(settings)` style helpers in `@/config/settings`. */
-export type GatewaySettings = Pick<Settings, 'thunderboltInferenceUrl' | 'thunderboltInferenceModels'>
+export type GatewaySettings = Pick<
+  Settings,
+  'thunderboltInferenceUrl' | 'thunderboltInferenceApiKey' | 'thunderboltInferenceModels'
+>
 
-/** Configured gateway models, empty when the gateway is not configured. */
+/**
+ * How long a discovery result is trusted. Model catalogues change rarely, and
+ * the cost of being stale is a picker entry that appears or disappears one
+ * refresh late, so this is deliberately long enough that request paths never
+ * wait on the network.
+ */
+const discoveryTtlMs = 5 * 60 * 1000
+
+type DiscoveryCache = {
+  url: string
+  allowlist: string
+  fetchedAt: number
+  specs: GatewayModelSpec[]
+}
+
+let cache: DiscoveryCache | null = null
+
+/** Reset discovery state. Exported for tests. */
+export const clearGatewayModelCache = (): void => {
+  cache = null
+}
+
+/** Shape of the OpenAI-compatible `GET /models` payload we rely on. */
+type ModelsResponse = { data?: Array<{ id?: unknown }> }
+
+/**
+ * Ask the gateway what it serves.
+ *
+ * Discovery rather than configuration: operators should not have to restate a
+ * catalogue the gateway already publishes. `THUNDERBOLT_INFERENCE_MODELS`
+ * remains an optional allowlist plus label source, applied on top.
+ *
+ * Failures are swallowed to an empty list. A gateway that is down must not stop
+ * the app from booting or serving its built-in models, and the next refresh
+ * after the TTL picks it back up.
+ */
+const discover = async (settings: GatewaySettings, fetchFn: typeof fetch): Promise<GatewayModelSpec[]> => {
+  const overrides = new Map(parseGatewayModelSpecs(settings.thunderboltInferenceModels).map((s) => [s.id, s.label]))
+  // `thunderboltInferenceUrl` already includes the `/v1` prefix by convention.
+  const url = `${settings.thunderboltInferenceUrl.replace(/\/$/, '')}/models`
+
+  try {
+    const response = await fetchFn(url, {
+      headers: settings.thunderboltInferenceApiKey
+        ? { Authorization: `Bearer ${settings.thunderboltInferenceApiKey}` }
+        : {},
+    })
+    if (!response.ok) {
+      console.warn(`Inference gateway model discovery failed: HTTP ${response.status}`)
+      return []
+    }
+    const body = (await response.json()) as ModelsResponse
+    const ids = (body.data ?? []).map((entry) => entry?.id).filter((id): id is string => typeof id === 'string' && !!id)
+
+    // A non-empty allowlist narrows discovery; an empty one accepts everything.
+    const allowed = overrides.size > 0 ? ids.filter((id) => overrides.has(id)) : ids
+    const seen = new Set<string>()
+    return allowed.flatMap((id) => (seen.has(id) ? [] : (seen.add(id), [{ id, label: overrides.get(id) || id }])))
+  } catch (error) {
+    console.warn('Inference gateway model discovery failed:', error)
+    return []
+  }
+}
+
+/**
+ * Refresh discovery if the cache is empty, stale, or was built for different
+ * settings. Safe to await on any path: a warm cache makes it a no-op.
+ */
+export const ensureGatewayModels = async (
+  settings: GatewaySettings,
+  options: { fetchFn?: typeof fetch; nowFn?: () => number } = {},
+): Promise<GatewayModelSpec[]> => {
+  if (!settings.thunderboltInferenceUrl) {
+    cache = null
+    return []
+  }
+
+  const fetchFn = options.fetchFn ?? fetch
+  const now = (options.nowFn ?? Date.now)()
+  const fresh =
+    cache !== null &&
+    cache.url === settings.thunderboltInferenceUrl &&
+    cache.allowlist === settings.thunderboltInferenceModels &&
+    now - cache.fetchedAt < discoveryTtlMs
+
+  if (fresh && cache) {
+    return cache.specs
+  }
+
+  const specs = await discover(settings, fetchFn)
+  cache = {
+    url: settings.thunderboltInferenceUrl,
+    allowlist: settings.thunderboltInferenceModels,
+    fetchedAt: now,
+    specs,
+  }
+  return specs
+}
+
+/**
+ * Last known gateway models, without touching the network.
+ *
+ * Synchronous so hot paths stay cheap; callers that need freshness await
+ * `ensureGatewayModels` first.
+ */
 export const getGatewayModelSpecs = (settings: GatewaySettings): GatewayModelSpec[] =>
-  settings.thunderboltInferenceUrl ? parseGatewayModelSpecs(settings.thunderboltInferenceModels) : []
+  settings.thunderboltInferenceUrl && cache?.url === settings.thunderboltInferenceUrl ? cache.specs : []
 
-/** Whether `modelId` is one the configured gateway serves. */
+/** Whether `modelId` is one the gateway serves, per the latest discovery. */
 export const isGatewayModel = (modelId: string, settings: GatewaySettings): boolean =>
   getGatewayModelSpecs(settings).some((spec) => spec.id === modelId)
 
