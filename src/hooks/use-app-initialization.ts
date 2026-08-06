@@ -20,6 +20,7 @@ import { beginInitRun, getInitTimingPayload, recordInitStep } from '@/lib/init-t
 import { pickModelsDefaults } from '@/lib/pick-defaults'
 import { getDatabasePath, getDatabaseType, getPlatform, isIndexedDbAvailable } from '@/lib/platform'
 import { initPosthog, trackError, trackEvent } from '@/lib/posthog'
+import { withTimeout } from '@/lib/timeout'
 import { runDataMigrations } from '@/lib/data-migrations'
 import { reconcileDefaults, versionMarkerKeys, type VersionMarkerKey } from '@/lib/reconcile-defaults'
 import { defaultSettingsVersion } from '@/defaults/settings'
@@ -113,25 +114,15 @@ export const waitForDatabaseReady = async (
   db: Pick<AnyDrizzleDatabase, 'get'>,
   timeoutMs: number = dbReadyTimeoutMs,
 ): Promise<DatabaseReadyResult> => {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<DatabaseReadyResult>((resolve) => {
-    timer = setTimeout(() => resolve({ outcome: 'timed_out' }), timeoutMs)
-  })
-  try {
-    return await Promise.race([
-      (async (): Promise<DatabaseReadyResult> => {
-        try {
-          await db.get(sql`select 1`)
-          return { outcome: 'ready' }
-        } catch (error) {
-          return { outcome: 'failed', error }
-        }
-      })(),
-      timeout,
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
+  const firstQuery = (async (): Promise<DatabaseReadyResult> => {
+    try {
+      await db.get(sql`select 1`)
+      return { outcome: 'ready' }
+    } catch (error) {
+      return { outcome: 'failed', error }
+    }
+  })()
+  return (await withTimeout(firstQuery, timeoutMs, 'waitForDatabaseReady')) ?? { outcome: 'timed_out' }
 }
 
 type TrayInitResult = { tray: TrayIcon | undefined; window: Window | undefined }
