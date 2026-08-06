@@ -98,30 +98,33 @@ const initializeDatabase = async (appDirPath: string): Promise<{ db: AnyDrizzleD
  */
 export const dbReadyTimeoutMs = 30_000
 
-export type DatabaseReadyOutcome = 'ready' | 'timed_out' | 'failed'
+export type DatabaseReadyResult =
+  | { outcome: 'ready' }
+  | { outcome: 'timed_out' }
+  | { outcome: 'failed'; error: unknown }
 
 /**
  * Resolve the database's first query with a bound, so a database that never
- * opens reports instead of hanging. Never rejects: the caller turns every
- * non-'ready' outcome into an error screen.
+ * opens reports instead of hanging. Never rejects: a query failure is returned
+ * as `{ outcome: 'failed', error }` so the caller can surface the original
+ * error (stack trace included) on the error screen and in tracking.
  */
 export const waitForDatabaseReady = async (
   db: Pick<AnyDrizzleDatabase, 'get'>,
   timeoutMs: number = dbReadyTimeoutMs,
-): Promise<DatabaseReadyOutcome> => {
+): Promise<DatabaseReadyResult> => {
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<DatabaseReadyOutcome>((resolve) => {
-    timer = setTimeout(() => resolve('timed_out'), timeoutMs)
+  const timeout = new Promise<DatabaseReadyResult>((resolve) => {
+    timer = setTimeout(() => resolve({ outcome: 'timed_out' }), timeoutMs)
   })
   try {
     return await Promise.race([
-      (async (): Promise<DatabaseReadyOutcome> => {
+      (async (): Promise<DatabaseReadyResult> => {
         try {
           await db.get(sql`select 1`)
-          return 'ready'
+          return { outcome: 'ready' }
         } catch (error) {
-          console.error('Database failed its first query:', error)
-          return 'failed'
+          return { outcome: 'failed', error }
         }
       })(),
       timeout,
@@ -252,15 +255,17 @@ const executeInitializationSteps = async (httpClient?: HttpClient): Promise<Hand
   // spinner forever, which looks identical to a slow network and hides the one
   // remedy that works — clearing the local database, which the error screen
   // offers. Reported as DATABASE_INIT_FAILED so the user gets that affordance.
-  const dbReadyOutcome = await time('step2b_db_ready', () => waitForDatabaseReady(db))
-  if (dbReadyOutcome !== 'ready') {
+  const dbReady = await time('step2b_db_ready', () => waitForDatabaseReady(db))
+  if (dbReady.outcome !== 'ready') {
+    console.error('Database did not become ready:', dbReady)
     const dbReadyError = createHandleError(
       'DATABASE_INIT_FAILED',
-      dbReadyOutcome === 'timed_out'
+      dbReady.outcome === 'timed_out'
         ? `Database did not become ready within ${dbReadyTimeoutMs / 1000}s`
         : 'Database failed its first query',
+      dbReady.outcome === 'failed' ? dbReady.error : undefined,
     )
-    trackError(dbReadyError, { initialization_step: 'db_ready', outcome: dbReadyOutcome })
+    trackError(dbReadyError, { initialization_step: 'db_ready', outcome: dbReady.outcome })
     return { success: false, error: dbReadyError }
   }
 

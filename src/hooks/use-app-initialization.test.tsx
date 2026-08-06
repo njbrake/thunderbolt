@@ -227,17 +227,19 @@ describe('resolveInitialSyncStep', () => {
 describe('waitForDatabaseReady', () => {
   it('reports ready when the first query resolves', async () => {
     const db = { get: mock(async () => ({ 1: 1 })) }
-    expect(await waitForDatabaseReady(db as never, 1000)).toBe('ready')
+    expect(await waitForDatabaseReady(db as never, 1000)).toEqual({ outcome: 'ready' })
     expect(db.get).toHaveBeenCalledTimes(1)
   })
 
-  it('reports failed when the first query rejects, rather than propagating', async () => {
+  it('reports failed with the original error when the first query rejects, rather than propagating', async () => {
+    const queryError = new Error('no such vfs')
     const db = {
       get: mock(async () => {
-        throw new Error('no such vfs')
+        throw queryError
       }),
     }
-    expect(await waitForDatabaseReady(db as never, 1000)).toBe('failed')
+    const result = await waitForDatabaseReady(db as never, 1000)
+    expect(result).toEqual({ outcome: 'failed', error: queryError })
   })
 
   // The whole point: PowerSync opens storage lazily on this query, so a database
@@ -246,13 +248,13 @@ describe('waitForDatabaseReady', () => {
     const db = { get: mock(() => new Promise(() => {})) }
     const pending = waitForDatabaseReady(db as never, 20)
     await getClock().runAllAsync()
-    expect(await pending).toBe('timed_out')
+    expect(await pending).toEqual({ outcome: 'timed_out' })
   })
 
   it('does not time out a slow-but-successful open', async () => {
     const db = { get: mock(() => new Promise((resolve) => setTimeout(() => resolve({ 1: 1 }), 30))) }
     const pending = waitForDatabaseReady(db as never, 2000)
     await getClock().runAllAsync()
-    expect(await pending).toBe('ready')
+    expect(await pending).toEqual({ outcome: 'ready' })
   })
 })
