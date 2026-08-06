@@ -24,7 +24,7 @@ test.describe('SAML login flow', () => {
     await page.goto('/chats/new')
     await expect(page.locator('textarea')).toBeVisible({ timeout: 10_000 })
 
-    await expect(page).not.toHaveURL(/sso-redirect/)
+    await expect(page).not.toHaveURL(/sign-in/)
   })
 
   test('page loads without critical JS errors after SAML login', async ({ page }) => {

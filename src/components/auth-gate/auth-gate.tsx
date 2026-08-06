@@ -13,7 +13,7 @@ type AuthGateProps = {
 }
 
 const redirectPaths: Record<RedirectTarget, string> = {
-  sso: '/sso-redirect',
+  sso: '/sign-in',
   waitlist: '/waitlist',
   home: '/',
 }
@@ -27,7 +27,7 @@ const redirectPaths: Record<RedirectTarget, string> = {
  * configuration needed.
  *
  * @example
- * // Require authentication — redirects to /sso-redirect (SSO mode) or /waitlist (consumer mode),
+ * // Require authentication — redirects to /sign-in (SSO mode) or /waitlist (consumer mode),
  * // or auto-creates an anonymous session when `VITE_AUTH_ENABLE_ANONYMOUS=true` on a bypass-waitlist
  * // / PR-preview deployment.
  * <Route element={<AuthGate require="authenticated" />}>

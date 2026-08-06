@@ -11,6 +11,7 @@ interface ImportMetaEnv {
   readonly VITE_AUTH_MODE?: 'thunderbolt' | 'sso'
   readonly VITE_AUTH_ENABLE_ANONYMOUS?: 'true' | 'false'
   readonly VITE_APP_VERSION?: string
+  readonly VITE_SSO_PROVIDER_NAME?: string
 }
 
 // eslint-disable-next-line @typescript-eslint/consistent-type-definitions
