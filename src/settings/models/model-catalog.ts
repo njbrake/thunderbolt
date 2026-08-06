@@ -3,9 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { getTinfoilClient } from '@/ai/tinfoil-client'
+import { fetchConfig } from '@/api/config'
+import { useConfigStore } from '@/api/config-store'
 import { fetch } from '@/lib/fetch'
 import { http } from '@/lib/http'
 import { normalizeOpenAiBaseUrl } from '@/lib/openai-base-url'
+import { getLocalSetting } from '@/stores/local-settings-store'
 import type { Model } from '@/types'
 import { defaultModels } from '@shared/defaults/models'
 import { catalogRequiresApiKey } from './model-policy'
@@ -29,6 +32,51 @@ export type CatalogRequest = {
 export const thunderboltModelCatalog: AvailableModel[] = defaultModels
   .filter((model) => model.provider === 'thunderbolt')
   .map((model) => ({ id: model.model, name: model.name, supports_tools: model.toolUsage === 1 }))
+
+/**
+ * Thunderbolt-provider catalog for *this* deployment.
+ *
+ * The bundled list only knows the models shipped with the client, but a
+ * self-hosted backend can proxy more than that — anything its inference gateway
+ * serves (`THUNDERBOLT_INFERENCE_URL`) is advertised in `GET /config` with
+ * `provider: 'thunderbolt'`. Those ids cannot arrive through the defaults
+ * reconciler, which drops OTA models that have no bundled model profile, so read
+ * them straight off the config payload here instead.
+ *
+ * Falls back to the bundled catalogue when `/config` has not loaded or the
+ * deployment advertises nothing, so the picker is never empty.
+ */
+export const getThunderboltCatalog = (): AvailableModel[] => {
+  const advertised = useConfigStore.getState().config.defaults?.models?.data ?? []
+  const served = advertised
+    .filter((model) => model.provider === 'thunderbolt')
+    .map((model) => ({ id: model.model, name: model.name, supports_tools: model.toolUsage === 1 }))
+  return served.length > 0 ? served : thunderboltModelCatalog
+}
+
+/**
+ * Re-reads the deployment's served model list, then returns it.
+ *
+ * The config store is persisted to localStorage and otherwise only populated
+ * during boot, so without this the picker would show whatever the gateway served
+ * the last time the app cold-started — on a phone that is resumed rather than
+ * relaunched, potentially for days. Re-fetching `/config` here also refreshes the
+ * backend's own discovery cache, so a model added upstream shows up without
+ * either side being redeployed.
+ *
+ * A failed fetch is not an error: `fetchConfig` swallows failures and leaves the
+ * persisted config in place, so an offline refresh returns the previous list
+ * rather than blanking the picker.
+ *
+ * `refresh` is injected so tests can drive this without mocking the shared
+ * `@/api/config` module (Bun's `mock.module` leaks across test files).
+ */
+export const fetchThunderboltCatalog = async (
+  refresh: () => Promise<unknown> = () => fetchConfig(getLocalSetting('cloudUrl')),
+): Promise<AvailableModel[]> => {
+  await refresh()
+  return getThunderboltCatalog()
+}
 
 /** Anthropic's models endpoint is not OpenAI-compatible: auth is `x-api-key` (not a
  *  bearer), a version header is mandatory, and rows carry `display_name`. Listing
@@ -103,7 +151,7 @@ const resolveCatalogEndpoint = ({ provider, apiKey, url }: CatalogRequest): stri
 /** Fetches a provider catalog only when explicitly requested by the caller. */
 export const fetchModelsForProvider = async ({ provider, apiKey, url }: CatalogRequest): Promise<AvailableModel[]> => {
   if (provider === 'thunderbolt') {
-    return thunderboltModelCatalog
+    return fetchThunderboltCatalog()
   }
   if (provider === 'anthropic') {
     return apiKey ? fetchAnthropicModels(apiKey) : []

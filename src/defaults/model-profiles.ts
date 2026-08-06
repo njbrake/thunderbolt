@@ -8,4 +8,6 @@ export {
   defaultModelProfileOpus48,
   defaultModelProfiles,
   hashModelProfile,
+  resolveModelProfiles,
+  synthesizeModelProfile,
 } from './model-profiles/index'

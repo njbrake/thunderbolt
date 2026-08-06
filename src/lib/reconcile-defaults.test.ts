@@ -1415,16 +1415,15 @@ describe('reconcileDefaults version gate (THU-637)', () => {
     expect(rowAgain?.defaultHash).toBe(hashModel(effectiveExpected))
   })
 
-  test('OTA models without a bundled profile are dropped and do not advance the marker', async () => {
+  test('OTA models without a bundled profile are inserted with a synthesized profile', async () => {
     const db = getDb()
 
-    // Simulate an OTA payload that includes a model whose id this client's
-    // bundle has no profile for (a genuine "new model" scenario the OTA
-    // channel can express but this bundle can't fully render because profiles
-    // aren't part of `/config`). The dropped id must not be inserted, and
-    // the marker must not advance to the OTA version — otherwise a later
-    // client with the fuller bundle would see `stored=OTA.version` and its
-    // canOverwrite would be closed, permanently blocking the missing insert.
+    // A payload carrying a model id this bundle has no profile for. These used to
+    // be dropped, which left a self-hosted deployment unable to surface the models
+    // its own inference gateway serves, and wedged the version marker in a
+    // permanent partial-apply state. Profiles carry no per-model knowledge, so the
+    // model is now inserted alongside a synthesized profile and the marker
+    // advances.
     const unknownId = '019fa11c-0000-7000-b000-abcdefabcdef'
     const otaSource: ModelsDefaults = {
       version: defaultModelsVersion + 1,
@@ -1454,8 +1453,15 @@ describe('reconcileDefaults version gate (THU-637)', () => {
 
     await reconcileDefaults(db, { models: otaSource })
 
-    const ghost = await db.select().from(modelsTable).where(eq(modelsTable.id, unknownId)).get()
-    expect(ghost).toBeUndefined()
+    const inserted = await db.select().from(modelsTable).where(eq(modelsTable.id, unknownId)).get()
+    expect(inserted).toBeDefined()
+    expect(inserted?.model).toBe('future-model')
+
+    // The 1:1 model-to-profile invariant is preserved by synthesis, not by
+    // refusing the model.
+    const profile = await db.select().from(modelProfilesTable).where(eq(modelProfilesTable.modelId, unknownId)).get()
+    expect(profile).toBeDefined()
+    expect(profile?.maxSteps).toBe(20)
 
     // Bundle-known models still applied.
     for (const known of defaultModels) {
@@ -1463,10 +1469,8 @@ describe('reconcileDefaults version gate (THU-637)', () => {
       expect(row).toBeDefined()
     }
 
-    // Marker did not advance to OTA version — no client is fully at that
-    // version yet, so peers with the fuller bundle should still be able to
-    // reach open canOverwrite on their next boot.
-    expect(await readStoredModelsVersion()).not.toBe(defaultModelsVersion + 1)
+    // Nothing was dropped, so the apply is complete and the marker advances.
+    expect(await readStoredModelsVersion()).toBe(defaultModelsVersion + 1)
   })
 })
 
@@ -1810,5 +1814,98 @@ describe('reconcileDefaults per-table version gates (THU-677)', () => {
       expect(row).toBeDefined()
     }
     expect(await readStoredVersion('defaults_version.settings')).toBe(defaultSettingsVersion)
+  })
+})
+
+describe('self-hosted gateway convergence (returning device)', () => {
+  /** The payload a self-host with only an inference gateway publishes: no bundled
+   *  ids at all, because the shipped lineup routes to Anthropic/Fireworks/Tinfoil. */
+  const gatewayOnlySource: ModelsDefaults = {
+    version: defaultModelsVersion + 1,
+    data: ['ds4', 'pi-dev'].map((model, i) => ({
+      id: `019fb000-0000-7000-b000-00000000000${i}`,
+      name: model,
+      provider: 'thunderbolt' as const,
+      model,
+      isSystem: 1,
+      enabled: 1,
+      isConfidential: 0,
+      contextWindow: null,
+      toolUsage: 1,
+      startWithReasoning: 0,
+      supportsParallelToolCalls: 0,
+      deletedAt: null,
+      url: null,
+      defaultHash: null,
+      vendor: null,
+      description: null,
+      userId: null,
+    })),
+  }
+
+  // The case the user actually hits: a device that already seeded the shipped
+  // lineup, then the deployment starts advertising only what it can serve.
+  test('retires already-seeded shipped models the deployment cannot serve', async () => {
+    const db = getDb()
+
+    // Seed the bundled lineup exactly as a previous boot would have.
+    await reconcileDefaults(db)
+    for (const shipped of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, shipped.id)).get()
+      expect(row?.deletedAt).toBeNull()
+    }
+
+    await reconcileDefaults(db, { models: gatewayOnlySource, initialSyncCompleted: true })
+
+    // Every shipped model is retired...
+    for (const shipped of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, shipped.id)).get()
+      expect(row?.deletedAt).not.toBeNull()
+    }
+    // ...and the gateway's models are live, with synthesized profiles.
+    for (const served of gatewayOnlySource.data) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, served.id)).get()
+      expect(row?.deletedAt).toBeNull()
+      const profile = await db.select().from(modelProfilesTable).where(eq(modelProfilesTable.modelId, served.id)).get()
+      expect(profile).toBeDefined()
+    }
+  })
+
+  // The gate that decides whether the above can happen at all. A returning device
+  // with rows already present refuses to write until sync has settled, so a
+  // mid-sync boot must leave the shipped models alone rather than half-retire them.
+  test('leaves everything untouched while initial sync is incomplete', async () => {
+    const db = getDb()
+    await reconcileDefaults(db)
+
+    await reconcileDefaults(db, { models: gatewayOnlySource, initialSyncCompleted: false })
+
+    for (const shipped of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, shipped.id)).get()
+      expect(row?.deletedAt).toBeNull()
+    }
+  })
+
+  // A user-added model must never be swept by retirement, whatever the server says.
+  test('never retires a model the user added themselves', async () => {
+    const db = getDb()
+    await reconcileDefaults(db)
+    await db.insert(modelsTable).values({
+      id: 'user-added-kimi',
+      name: 'My Kimi',
+      provider: 'thunderbolt',
+      model: 'kimi',
+      isSystem: 0,
+      enabled: 1,
+      isConfidential: 0,
+      toolUsage: 1,
+      startWithReasoning: 0,
+      supportsParallelToolCalls: 0,
+    })
+
+    await reconcileDefaults(db, { models: gatewayOnlySource, initialSyncCompleted: true })
+
+    const mine = await db.select().from(modelsTable).where(eq(modelsTable.id, 'user-added-kimi')).get()
+    expect(mine?.deletedAt).toBeNull()
   })
 })

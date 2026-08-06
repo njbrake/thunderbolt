@@ -65,22 +65,45 @@ describe('pickModelsDefaults', () => {
     }
   })
 
-  test('bundle wins when server payload has zero overlap with bundled ids (wholesale replacement)', () => {
-    // Without this guard, `cleanupRemovedDefaults` would treat every bundle-
-    // known row as retired (nothing matches server's currentModelIds) and
-    // soft-delete them all, while the filtered reconcile pass would insert
-    // nothing (OTA-only-new ids have no bundled profile). Client would boot
-    // with zero system models.
+  test('server wins even with zero overlap against bundled ids', () => {
+    // This used to fall back to the bundle: a disjoint payload meant cleanup
+    // retired every bundle-known row while the reconcile pass inserted nothing,
+    // because OTA-only ids had no bundled profile. `reconcileDefaults` now
+    // synthesizes a profile for an unknown id, so a disjoint payload inserts what
+    // it advertises.
+    //
+    // It also has to win, or self-hosting is broken: the bundled lineup routes to
+    // Anthropic, Fireworks and Tinfoil, so a deployment serving only its own
+    // inference gateway shares no ids with the bundle and would be forced to keep
+    // advertising models that fail on send.
     const disjointPayload = {
       version: defaultModelsVersion + 5,
       data: [
-        { ...defaultModelOpus48, id: 'disjoint-id-1', name: 'Fully Different Model 1' },
-        { ...defaultModelOpus48, id: 'disjoint-id-2', name: 'Fully Different Model 2' },
+        { ...defaultModelOpus48, id: 'disjoint-id-1', model: 'kimi', name: 'Kimi' },
+        { ...defaultModelOpus48, id: 'disjoint-id-2', model: 'ds4', name: 'DS4' },
       ],
     }
     const picked = pickModelsDefaults(disjointPayload)
-    expect(picked.version).toBe(defaultModelsVersion)
-    expect(picked.data).toBe(defaultModels)
+    expect(picked.version).toBe(defaultModelsVersion + 5)
+    expect(picked.data).toBe(disjointPayload.data)
+  })
+
+  test('bundle wins when any entry is not model-shaped', () => {
+    // Shape-checking replaces the old overlap heuristic as the malformed-payload
+    // guard: retirement is driven by this list, so a garbled entry must not be
+    // able to sweep system models.
+    for (const bad of [
+      { id: 'x', name: 'No model field', provider: 'thunderbolt' },
+      { id: 'y', model: 'm', name: 'No provider' },
+      { model: 'm', provider: 'thunderbolt', name: 'No id' },
+    ]) {
+      const picked = pickModelsDefaults({
+        version: defaultModelsVersion + 5,
+        data: [defaultModelOpus48, bad as never],
+      })
+      expect(picked.version).toBe(defaultModelsVersion)
+      expect(picked.data).toBe(defaultModels)
+    }
   })
 
   test('server wins when the payload has any overlap with bundled ids (partial overlap ok)', () => {
