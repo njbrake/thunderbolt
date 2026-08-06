@@ -19,8 +19,13 @@ COPY .storybook ./.storybook
 # Build args — baked into the static bundle at build time
 ARG VITE_THUNDERBOLT_CLOUD_URL="/v1"
 ARG VITE_AUTH_MODE="sso"
+# Name on the SSO sign-in button ("Sign in with Keycloak"). Cosmetic and
+# deployment-specific: this screen fronts Keycloak, Okta, Entra or Auth0 alike.
+# Falls back to a generic "SSO" when empty.
+ARG VITE_SSO_PROVIDER_NAME=""
 ENV VITE_THUNDERBOLT_CLOUD_URL=$VITE_THUNDERBOLT_CLOUD_URL
 ENV VITE_AUTH_MODE=$VITE_AUTH_MODE
+ENV VITE_SSO_PROVIDER_NAME=$VITE_SSO_PROVIDER_NAME
 
 RUN bunx vite build && \
     find dist -name '*.map' -delete

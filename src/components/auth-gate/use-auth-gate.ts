@@ -20,7 +20,7 @@ export type AuthGateState =
  *
  * For `require="authenticated"`:
  *  - has session (real or anonymous) → allowed
- *  - SSO mode + no session → redirect to /sso-redirect
+ *  - SSO mode + no session → redirect to /sign-in
  *  - waitlist bypassed + anonymous overlay enabled + no session → fire `signIn.anonymous()` and show loading
  *  - waitlist active + no session → redirect to /waitlist
  *
