@@ -272,7 +272,7 @@ browser-facing `Cache-Control` to its own Browser Cache TTL, 4 hours on the free
 plan. Measured on this deployment against a `no-cache` origin:
 
 ```
-$ curl -sD - -o /dev/null https://tb.natebrake.com/sw.js | grep -i 'cache\|age'
+$ curl -sD - -o /dev/null https://<app-domain>/sw.js | grep -i 'cache\|age'
 age: 675
 cache-control: max-age=14400
 cf-cache-status: HIT

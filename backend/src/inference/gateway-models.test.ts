@@ -64,11 +64,11 @@ describe('parseGatewayModelSpecs', () => {
 
 describe('ensureGatewayModels', () => {
   it('discovers whatever the gateway advertises, with no list configured', async () => {
-    const fetchFn = modelsResponse(['clawbolt-prod', 'kimi'])
+    const fetchFn = modelsResponse(['llama-3.3-70b', 'kimi'])
     const specs = await ensureGatewayModels(configured(), { fetchFn: fetchFn as never })
 
     expect(specs).toEqual([
-      { id: 'clawbolt-prod', label: 'clawbolt-prod' },
+      { id: 'llama-3.3-70b', label: 'llama-3.3-70b' },
       { id: 'kimi', label: 'kimi' },
     ])
     expect(fetchFn).toHaveBeenCalledTimes(1)

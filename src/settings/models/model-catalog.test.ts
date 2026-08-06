@@ -84,10 +84,10 @@ describe('getThunderboltCatalog', () => {
   it('offers models the deployment advertises but the bundle does not know', () => {
     advertise([
       { provider: 'thunderbolt', model: 'kimi', name: 'Kimi', toolUsage: 1 },
-      { provider: 'thunderbolt', model: 'clawbolt-prod', name: 'Clawbolt', toolUsage: 1 },
+      { provider: 'thunderbolt', model: 'llama-3.3-70b', name: 'Llama 3.3 70B', toolUsage: 1 },
     ])
 
-    expect(getThunderboltCatalog().map((m) => m.id)).toEqual(['kimi', 'clawbolt-prod'])
+    expect(getThunderboltCatalog().map((m) => m.id)).toEqual(['kimi', 'llama-3.3-70b'])
     expect(getThunderboltCatalog()[0].name).toBe('Kimi')
   })
 
