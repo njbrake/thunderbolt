@@ -1816,3 +1816,96 @@ describe('reconcileDefaults per-table version gates (THU-677)', () => {
     expect(await readStoredVersion('defaults_version.settings')).toBe(defaultSettingsVersion)
   })
 })
+
+describe('self-hosted gateway convergence (returning device)', () => {
+  /** The payload a self-host with only an inference gateway publishes: no bundled
+   *  ids at all, because the shipped lineup routes to Anthropic/Fireworks/Tinfoil. */
+  const gatewayOnlySource: ModelsDefaults = {
+    version: defaultModelsVersion + 1,
+    data: ['ds4', 'pi-dev'].map((model, i) => ({
+      id: `019fb000-0000-7000-b000-00000000000${i}`,
+      name: model,
+      provider: 'thunderbolt' as const,
+      model,
+      isSystem: 1,
+      enabled: 1,
+      isConfidential: 0,
+      contextWindow: null,
+      toolUsage: 1,
+      startWithReasoning: 0,
+      supportsParallelToolCalls: 0,
+      deletedAt: null,
+      url: null,
+      defaultHash: null,
+      vendor: null,
+      description: null,
+      userId: null,
+    })),
+  }
+
+  // The case the user actually hits: a device that already seeded the shipped
+  // lineup, then the deployment starts advertising only what it can serve.
+  test('retires already-seeded shipped models the deployment cannot serve', async () => {
+    const db = getDb()
+
+    // Seed the bundled lineup exactly as a previous boot would have.
+    await reconcileDefaults(db)
+    for (const shipped of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, shipped.id)).get()
+      expect(row?.deletedAt).toBeNull()
+    }
+
+    await reconcileDefaults(db, { models: gatewayOnlySource, initialSyncCompleted: true })
+
+    // Every shipped model is retired...
+    for (const shipped of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, shipped.id)).get()
+      expect(row?.deletedAt).not.toBeNull()
+    }
+    // ...and the gateway's models are live, with synthesized profiles.
+    for (const served of gatewayOnlySource.data) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, served.id)).get()
+      expect(row?.deletedAt).toBeNull()
+      const profile = await db.select().from(modelProfilesTable).where(eq(modelProfilesTable.modelId, served.id)).get()
+      expect(profile).toBeDefined()
+    }
+  })
+
+  // The gate that decides whether the above can happen at all. A returning device
+  // with rows already present refuses to write until sync has settled, so a
+  // mid-sync boot must leave the shipped models alone rather than half-retire them.
+  test('leaves everything untouched while initial sync is incomplete', async () => {
+    const db = getDb()
+    await reconcileDefaults(db)
+
+    await reconcileDefaults(db, { models: gatewayOnlySource, initialSyncCompleted: false })
+
+    for (const shipped of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, shipped.id)).get()
+      expect(row?.deletedAt).toBeNull()
+    }
+  })
+
+  // A user-added model must never be swept by retirement, whatever the server says.
+  test('never retires a model the user added themselves', async () => {
+    const db = getDb()
+    await reconcileDefaults(db)
+    await db.insert(modelsTable).values({
+      id: 'user-added-kimi',
+      name: 'My Kimi',
+      provider: 'thunderbolt',
+      model: 'kimi',
+      isSystem: 0,
+      enabled: 1,
+      isConfidential: 0,
+      toolUsage: 1,
+      startWithReasoning: 0,
+      supportsParallelToolCalls: 0,
+    })
+
+    await reconcileDefaults(db, { models: gatewayOnlySource, initialSyncCompleted: true })
+
+    const mine = await db.select().from(modelsTable).where(eq(modelsTable.id, 'user-added-kimi')).get()
+    expect(mine?.deletedAt).toBeNull()
+  })
+})
