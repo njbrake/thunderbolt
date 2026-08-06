@@ -156,6 +156,15 @@ keycloak:
     clientId: thunderbolt-app
     # -- Base64-encoded client secret (default: "thunderbolt-enterprise-secret")
     clientSecretBase64: dGh1bmRlcmJvbHQtZW50ZXJwcmlzZS1zZWNyZXQ=
+  # -- Allow anyone to self-register an account in the `thunderbolt` realm.
+  # Keep this `false` whenever Keycloak is reachable from the internet. In
+  # `AUTH_MODE=oidc` the backend does NOT waitlist-gate SSO logins (the waitlist
+  # only guards the consumer OTP path), so a self-registered Keycloak account is
+  # a full Thunderbolt account with access to the deployment's provider keys.
+  registrationAllowed: false
+  # -- Offer the "Forgot password?" flow. Requires realm SMTP, which this chart
+  # does not configure; without it the flow dead-ends on an error page.
+  resetPasswordAllowed: false
   # -- Include a `demo@thunderbolt.io` / `demo` user in the imported realm.
   # Convenient for local/preview environments and docs walk-throughs; set to
   # `false` for production deployments. Default `true` preserves current behavior.

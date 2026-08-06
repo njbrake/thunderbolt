@@ -2,10 +2,10 @@
   "realm": "thunderbolt",
   "enabled": true,
   "sslRequired": "external",
-  "registrationAllowed": true,
+  "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
-  "resetPasswordAllowed": true,
+  "resetPasswordAllowed": false,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
   "clients": [
@@ -93,17 +93,17 @@
   ],
   "users": [
     {
-      "id": "1d0fc1e0-7a60-4f6f-93b6-5f1d9aef7d64",
-      "username": "demo",
-      "email": "demo@thunderbolt.io",
-      "firstName": "Demo",
-      "lastName": "User",
+      "id": "${KC_SEED_ID:1d0fc1e0-7a60-4f6f-93b6-5f1d9aef7d64}",
+      "username": "${KC_SEED_USERNAME:demo}",
+      "email": "${KC_SEED_EMAIL:demo@thunderbolt.io}",
+      "firstName": "${KC_SEED_FIRST_NAME:Demo}",
+      "lastName": "${KC_SEED_LAST_NAME:User}",
       "enabled": true,
       "emailVerified": true,
       "credentials": [
         {
           "type": "password",
-          "value": "demo",
+          "value": "${KC_SEED_PASSWORD:demo}",
           "temporary": false
         }
       ]

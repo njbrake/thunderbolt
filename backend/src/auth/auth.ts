@@ -45,6 +45,23 @@ export type AuthEmailDeps = {
 }
 
 const otpSignInPath = '/sign-in/email-otp'
+
+/**
+ * The consumer passwordless funnel: request a code, then redeem it.
+ *
+ * Both are refused outright when `AUTH_MODE` is `oidc`/`saml` (see the `before`
+ * hook). In those modes the identity provider is the only intended way in, and
+ * leaving these mounted means a second, parallel route to an account that no
+ * longer answers to the IdP's rules — a deployment that closes self-registration
+ * in its realm would still be reachable here.
+ *
+ * Today the OTP path happens to be closed in SSO mode for two incidental
+ * reasons: an unknown email lands in the waitlist as `pending`, and self-hosted
+ * stacks usually have no email provider configured so no code can be delivered.
+ * Neither is a decision anyone made. Setting `WAITLIST_AUTO_APPROVE_DOMAINS` or
+ * wiring up email would quietly turn both off.
+ */
+const consumerOtpPaths = [otpSignInPath, '/email-otp/send-verification-otp']
 const deviceTokenPath = '/device/token'
 const authTokenHeader = 'set-auth-token'
 
@@ -217,6 +234,13 @@ export const createAuth = (database: typeof DbType, emailDeps: AuthEmailDeps = {
     },
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        // In SSO mode the identity provider is the only way in. Refuse the consumer
+        // passwordless funnel here rather than relying on the waitlist and an
+        // unconfigured mail sender to keep it shut. See `consumerOtpPaths`.
+        if (ssoEnabled && consumerOtpPaths.includes(ctx.path)) {
+          throw ctx.error('NOT_FOUND', { message: 'Not available' })
+        }
+
         // Guard: prevent session fixation. A real (non-anonymous) user MUST NOT be
         // able to acquire a new anonymous session that could shadow their real session.
         // Reject /sign-in/anonymous if caller is already authenticated as a non-anonymous
