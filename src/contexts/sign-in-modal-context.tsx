@@ -60,7 +60,7 @@ export const SignInModalProvider = ({ children }: SignInModalProviderProps) => {
     if (shouldBypassWaitlist) {
       return
     }
-    window.location.replace(isSsoMode() ? '/sso-redirect' : '/waitlist')
+    window.location.replace(isSsoMode() ? '/sign-in' : '/waitlist')
   }
 
   const handleSignInSuccess = () => {

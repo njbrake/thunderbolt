@@ -12,21 +12,28 @@ import { expect, type Page } from '@playwright/test'
  */
 
 /**
- * OIDC flow: / -> AuthGate -> /sso-redirect -> POST sign-in/sso -> mock IdP /authorize
- * (auto-approves) -> backend callback -> token exchange -> session -> app
+ * OIDC flow: / -> AuthGate -> /sign-in -> click "Sign in with ..." -> POST sign-in/sso
+ * -> mock IdP /authorize (auto-approves) -> backend callback -> token exchange ->
+ * session -> app
+ *
+ * The click is required: /sign-in renders a sign-in screen rather than redirecting on
+ * mount. Matched on the label prefix so VITE_SSO_PROVIDER_NAME can change the suffix
+ * without touching every spec.
  */
 export const loginViaOidc = async (page: Page) => {
   await page.goto('/')
+  await page.getByRole('button', { name: /^sign in with/i }).click()
   const textarea = page.locator('textarea')
   await expect(textarea).toBeVisible({ timeout: 30_000 })
 }
 
 /**
- * SAML flow: / -> AuthGate -> /sso-redirect -> POST sign-in/sso -> mock IdP /saml/sso
- * (auto-generates SAMLResponse) -> POST to ACS -> session -> app
+ * SAML flow: / -> AuthGate -> /sign-in -> click "Sign in with ..." -> POST sign-in/sso
+ * -> mock IdP /saml/sso (auto-generates SAMLResponse) -> POST to ACS -> session -> app
  */
 export const loginViaSaml = async (page: Page) => {
   await page.goto('/')
+  await page.getByRole('button', { name: /^sign in with/i }).click()
   const textarea = page.locator('textarea')
   await expect(textarea).toBeVisible({ timeout: 30_000 })
 }
