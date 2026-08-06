@@ -265,6 +265,10 @@ setvar "$SVC_KC" \
   "RAILWAY_DOCKERFILE_PATH=deploy/docker/keycloak.Dockerfile" \
   "KC_HTTP_PORT=8080" \
   "KC_HTTP_ENABLED=true" \
+  "KC_DB=postgres" \
+  "KC_DB_URL=jdbc:postgresql://$SVC_PG.railway.internal:5432/keycloak" \
+  "KC_DB_USERNAME=postgres" \
+  "KC_DB_PASSWORD=$POSTGRES_PASSWORD" \
   "KC_PROXY_HEADERS=xforwarded" \
   "KC_HOSTNAME=$KC_URL" \
   "KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true" \
