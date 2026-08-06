@@ -72,8 +72,53 @@ describe('Config Routes', () => {
       expect(body.defaults.models.data).toEqual(defaultModels)
     })
 
+    // The shipped lineup routes to Anthropic / Fireworks / Tinfoil. A self-host
+    // holding none of those keys was still advertising all three, so the picker
+    // offered models that fail the moment you send to them.
+    it('omits shipped models this deployment holds no credentials for', async () => {
+      const settings = createTestSettings({
+        anthropicApiKey: '',
+        fireworksApiKey: '',
+        tinfoilApiKey: '',
+        thunderboltInferenceUrl: 'https://gateway.example.com/v1',
+        thunderboltInferenceApiKey: 'key',
+      })
+      await ensureGatewayModels(settings, {
+        fetchFn: mock(async () => new Response(JSON.stringify({ data: [{ id: 'kimi' }] }), { status: 200 })) as never,
+      })
+      const { body } = await fetchConfig(settings)
+
+      const ids = body.defaults.models.data.map((m: { model: string }) => m.model)
+      expect(ids).toEqual(['kimi'])
+      // Out-versions the bundle, so the client adopts it and retires the rest.
+      expect(body.defaults.models.version).toBe(defaultModelsVersion + 1)
+    })
+
+    it('keeps a shipped model whose provider credential IS configured', async () => {
+      // opus-4.8 routes to Anthropic.
+      const { body } = await fetchConfig(createTestSettings({ anthropicApiKey: 'sk-test' }))
+      const ids = body.defaults.models.data.map((m: { model: string }) => m.model)
+      expect(ids).toContain('opus-4.8')
+      expect(ids).not.toContain('deepseek-v4-flash')
+    })
+
+    // An unreachable gateway is transient; retiring every model on every client
+    // because of it would be worse than advertising a wrong-but-present lineup.
+    it('falls back to the shipped lineup rather than publishing nothing', async () => {
+      const { body } = await fetchConfig(
+        createTestSettings({ anthropicApiKey: '', fireworksApiKey: '', tinfoilApiKey: '' }),
+      )
+      expect(body.defaults.models.version).toBe(defaultModelsVersion)
+      expect(body.defaults.models.data).toEqual(defaultModels)
+    })
+
     it('appends inference gateway models and out-versions the bundled defaults', async () => {
       const settings = createTestSettings({
+        // Credentials for the whole shipped lineup, so this exercises appending
+        // rather than the credential filter (covered separately below).
+        anthropicApiKey: 'sk-anthropic',
+        fireworksApiKey: 'sk-fireworks',
+        tinfoilApiKey: 'sk-tinfoil',
         thunderboltInferenceUrl: 'https://gateway.example.com/v1',
         thunderboltInferenceApiKey: 'key',
         thunderboltInferenceModels: 'llama-3.3-70b=Llama 3.3 70B',
@@ -88,8 +133,7 @@ describe('Config Routes', () => {
       const { body } = await fetchConfig(settings)
 
       // A higher version is what makes the client prefer this payload over its
-      // bundled copy, and keeping the shipped defaults preserves the id overlap
-      // `pickDefaults` requires before it trusts the server.
+      // bundled copy.
       expect(body.defaults.models.version).toBe(defaultModelsVersion + 1)
       expect(body.defaults.models.data).toHaveLength(defaultModels.length + 1)
       expect(body.defaults.models.data.slice(0, defaultModels.length)).toEqual(defaultModels)

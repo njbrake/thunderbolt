@@ -9,7 +9,7 @@ import { eq, inArray, isNull } from 'drizzle-orm'
 import type { SQLiteTableWithColumns } from 'drizzle-orm/sqlite-core'
 import { v7 as uuidv7 } from 'uuid'
 import { modelProfilesTable, modelsTable, settingsTable, skillsTable, tasksTable } from '../db/tables'
-import { defaultModelProfiles, hashModelProfile } from '../defaults/model-profiles'
+import { hashModelProfile, resolveModelProfiles } from '../defaults/model-profiles'
 import { defaultModels, defaultModelsVersion, hashModel, type SharedModel } from '@shared/defaults/models'
 import { defaultSettings, defaultSettingsVersion, hashSetting } from '../defaults/settings'
 import { defaultSkills, defaultSkillsVersion, hashSkill, isWidgetSkillId } from '../defaults/skills'
@@ -480,23 +480,20 @@ export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: Reco
       initialSyncCompleted,
     )
 
-    // OTA can ship models whose id isn't in this bundle's `defaultModelProfiles`
-    // — profiles are not part of the OTA channel, so we have no profile to
-    // pair with them. Inserting the model row alone violates the 1:1 model↔
-    // profile invariant `insertMissing: true` is meant to preserve. Filter
-    // those ids out and log the drop; cleanup still uses the unfiltered set
-    // so a genuinely-shipped-elsewhere row (present locally via sync from a
-    // newer-bundle peer) stays alive.
-    const bundledProfileModelIds = new Set(defaultModelProfiles.map((p) => p.modelId))
-    const modelsForReconcile = modelsSource.data.filter((m) => bundledProfileModelIds.has(m.id))
-    const droppedOtaModelIds = modelsSource.data.filter((m) => !bundledProfileModelIds.has(m.id)).map((m) => m.id)
-    if (droppedOtaModelIds.length > 0) {
-      console.warn(
-        `[reconcileDefaults] Dropped ${droppedOtaModelIds.length} OTA model(s) without a bundled profile: ` +
-          `${droppedOtaModelIds.join(', ')}. OTA can only re-version or retire models this bundle knows; ` +
-          `adding a new model id requires a client build so its profile ships alongside.`,
-      )
-    }
+    // OTA can ship models whose id isn't in this bundle's `defaultModelProfiles`.
+    // These used to be dropped, on the grounds that inserting a model row with no
+    // profile violates the 1:1 invariant `insertMissing: true` preserves. But
+    // profiles carry no per-model knowledge — all bundled profiles are identical
+    // apart from `modelId` — so the invariant is better satisfied by synthesizing
+    // the missing profile than by refusing the model.
+    //
+    // Dropping them made a self-hosted deployment unable to surface the models its
+    // own inference gateway serves: they were advertised in /config, discarded
+    // here, and the picker was left showing only the shipped lineup — which such a
+    // deployment usually has no credentials for. It also wedged the version marker,
+    // since advancing it required `droppedOtaModelIds` to be empty, so every boot
+    // re-ran a partial apply that could never reach its target.
+    const modelsForReconcile = modelsSource.data
 
     // Soft-delete removed system defaults before reconciling current ones.
     // Cleanup uses the unfiltered OTA set so any id the server still ships
@@ -543,8 +540,7 @@ export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: Reco
     // profile for a model the OTA channel just retired — an orphan profile
     // with no live model — reintroducing the very 1:1 hazard `insertMissing`
     // exists to prevent, from the OTA-retire direction.
-    const aliveModelIdsForReconcile = new Set(modelsForReconcile.map((m) => m.id))
-    const profilesForReconcile = defaultModelProfiles.filter((p) => aliveModelIdsForReconcile.has(p.modelId))
+    const profilesForReconcile = resolveModelProfiles(modelsForReconcile.map((m) => m.id))
     const profilesPass = await reconcileDefaultsForTable(
       tx,
       modelProfilesTable,
@@ -574,13 +570,9 @@ export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: Reco
     //      advance. The "all rows user-edited" case still refuses because
     //      neither pass mutated and neither is at target — advancing would
     //      tell fresh-install peers to stop seeding their own rows.
-    //   3. `droppedOtaModelIds.length === 0` — our apply is a strict subset
-    //      of the picked version when we filter OTA models, and stamping the
-    //      full version would lock later fuller-bundle clients out of
-    //      inserting the missing models.
     const eitherPassMutated = modelsPass.mutated || profilesPass.mutated
     const bothPassesAtTarget = modelsPass.everyBundleRowAtTarget && profilesPass.everyBundleRowAtTarget
-    if (modelsGate.canOverwrite && (eitherPassMutated || bothPassesAtTarget) && droppedOtaModelIds.length === 0) {
+    if (modelsGate.canOverwrite && (eitherPassMutated || bothPassesAtTarget)) {
       await advanceVersionMarker(tx, versionMarkerKeys.models, modelsSource.version, modelsGate.stored)
     }
 

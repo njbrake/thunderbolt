@@ -1415,16 +1415,15 @@ describe('reconcileDefaults version gate (THU-637)', () => {
     expect(rowAgain?.defaultHash).toBe(hashModel(effectiveExpected))
   })
 
-  test('OTA models without a bundled profile are dropped and do not advance the marker', async () => {
+  test('OTA models without a bundled profile are inserted with a synthesized profile', async () => {
     const db = getDb()
 
-    // Simulate an OTA payload that includes a model whose id this client's
-    // bundle has no profile for (a genuine "new model" scenario the OTA
-    // channel can express but this bundle can't fully render because profiles
-    // aren't part of `/config`). The dropped id must not be inserted, and
-    // the marker must not advance to the OTA version — otherwise a later
-    // client with the fuller bundle would see `stored=OTA.version` and its
-    // canOverwrite would be closed, permanently blocking the missing insert.
+    // A payload carrying a model id this bundle has no profile for. These used to
+    // be dropped, which left a self-hosted deployment unable to surface the models
+    // its own inference gateway serves, and wedged the version marker in a
+    // permanent partial-apply state. Profiles carry no per-model knowledge, so the
+    // model is now inserted alongside a synthesized profile and the marker
+    // advances.
     const unknownId = '019fa11c-0000-7000-b000-abcdefabcdef'
     const otaSource: ModelsDefaults = {
       version: defaultModelsVersion + 1,
@@ -1454,8 +1453,15 @@ describe('reconcileDefaults version gate (THU-637)', () => {
 
     await reconcileDefaults(db, { models: otaSource })
 
-    const ghost = await db.select().from(modelsTable).where(eq(modelsTable.id, unknownId)).get()
-    expect(ghost).toBeUndefined()
+    const inserted = await db.select().from(modelsTable).where(eq(modelsTable.id, unknownId)).get()
+    expect(inserted).toBeDefined()
+    expect(inserted?.model).toBe('future-model')
+
+    // The 1:1 model-to-profile invariant is preserved by synthesis, not by
+    // refusing the model.
+    const profile = await db.select().from(modelProfilesTable).where(eq(modelProfilesTable.modelId, unknownId)).get()
+    expect(profile).toBeDefined()
+    expect(profile?.maxSteps).toBe(20)
 
     // Bundle-known models still applied.
     for (const known of defaultModels) {
@@ -1463,10 +1469,8 @@ describe('reconcileDefaults version gate (THU-637)', () => {
       expect(row).toBeDefined()
     }
 
-    // Marker did not advance to OTA version — no client is fully at that
-    // version yet, so peers with the fuller bundle should still be able to
-    // reach open canOverwrite on their next boot.
-    expect(await readStoredModelsVersion()).not.toBe(defaultModelsVersion + 1)
+    // Nothing was dropped, so the apply is complete and the marker advances.
+    expect(await readStoredModelsVersion()).toBe(defaultModelsVersion + 1)
   })
 })
 

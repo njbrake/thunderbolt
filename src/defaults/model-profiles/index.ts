@@ -47,3 +47,54 @@ export const defaultModelProfiles: ReadonlyArray<ModelProfile> = [
   defaultModelProfileDeepseekV4Flash,
   defaultModelProfileGlm52,
 ] as const
+
+/**
+ * Profile for a model this bundle ships no profile for — i.e. one the server
+ * advertised that the client was never built with.
+ *
+ * Profiles are 1:1 with models, and the values are pure tuning (temperature,
+ * step/attempt caps, nudge copy) with no per-model knowledge baked in: all three
+ * bundled profiles are byte-identical apart from `modelId`. So a model whose id
+ * the bundle doesn't know can be paired with the same baseline rather than
+ * dropped, which is what lets a self-hosted deployment surface the models its
+ * inference gateway serves without shipping a client release per model.
+ *
+ * Deliberately mirrors the bundled values rather than inventing new ones: a
+ * gateway model should behave like a shipped one until someone tunes it, and the
+ * user can edit any of this afterwards.
+ */
+export const synthesizeModelProfile = (modelId: string): ModelProfile => ({
+  modelId,
+  temperature: 0.2,
+  maxSteps: 20,
+  maxAttempts: 2,
+  nudgeThreshold: 6,
+  useSystemMessageModeDeveloper: 0,
+  providerOptions: null,
+  toolsOverride: null,
+  linkPreviewsOverride: null,
+  chatModeAddendum: null,
+  searchModeAddendum: null,
+  researchModeAddendum: null,
+  citationReinforcementEnabled: 0,
+  citationReinforcementPrompt: null,
+  nudgeFinalStep: null,
+  nudgePreventive: null,
+  nudgeRetry: null,
+  nudgeSearchFinalStep: null,
+  nudgeSearchPreventive: null,
+  nudgeSearchRetry: null,
+  deletedAt: null,
+  defaultHash: null,
+  userId: null,
+})
+
+/**
+ * One profile per model id, preferring the bundled profile and synthesizing for
+ * ids this bundle doesn't know. Preserves the 1:1 model↔profile invariant that
+ * `reconcileDefaults` relies on.
+ */
+export const resolveModelProfiles = (modelIds: readonly string[]): ModelProfile[] => {
+  const bundled = new Map(defaultModelProfiles.map((profile) => [profile.modelId, profile]))
+  return modelIds.map((modelId) => bundled.get(modelId) ?? synthesizeModelProfile(modelId))
+}

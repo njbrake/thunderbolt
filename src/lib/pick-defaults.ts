@@ -24,13 +24,24 @@ type ServerModelsDefaults = { version: number; data: SharedModel[] }
  * Sanity guards on the server payload (fall back to bundle when tripped):
  *   - version is a finite number strictly higher than the bundle's;
  *   - `data` is a non-empty array;
- *   - **at least one id in `data` overlaps with the bundle's `defaultModels`**.
- *     Without this, `cleanupRemovedDefaults` would treat every bundle-known
- *     row as retired (none appear in the server's `currentModelIds`) and
- *     soft-delete the lot, while the filtered reconcile pass would insert
- *     nothing (OTA-only-new ids have no bundled profile). Bundle acts as the
- *     floor: OTA can update or retire ids the bundle knows, but not wipe
- *     wholesale.
+ *   - every entry is model-shaped (`id`, `model` and `provider` present).
+ *
+ * A bundle-id overlap used to be required too, because a fully-disjoint payload
+ * meant `cleanupRemovedDefaults` retired every bundle-known row while the
+ * reconcile pass inserted nothing — OTA-only ids had no bundled profile, so they
+ * were dropped. `reconcileDefaults` now synthesizes a profile for an unknown id
+ * instead of dropping it, so a disjoint payload inserts what it advertises and the
+ * premise no longer holds.
+ *
+ * That requirement was actively wrong for self-hosted deployments: the shipped
+ * lineup routes to Anthropic, Fireworks and Tinfoil, so a self-host with only its
+ * own inference gateway configured can serve *none* of the bundled ids. Demanding
+ * an overlap forced it to keep advertising models that fail on send.
+ *
+ * Shape-checking each entry replaces the overlap heuristic as the guard against a
+ * malformed payload, and retirement stays bounded either way:
+ * `cleanupRemovedDefaults` only sweeps rows with `isSystem = 1` and a
+ * `defaultHash`, never anything the user created.
  */
 export const pickModelsDefaults = (server: ServerModelsDefaults | undefined): ModelsDefaults => {
   if (
@@ -40,17 +51,15 @@ export const pickModelsDefaults = (server: ServerModelsDefaults | undefined): Mo
     Array.isArray(server.data) &&
     server.data.length > 0
   ) {
-    const bundledIds = new Set(defaultModels.map((m) => m.id))
-    if (server.data.some((m) => bundledIds.has(m.id))) {
+    const isModelShaped = (model: SharedModel) => !!model?.id && !!model?.model && !!model?.provider
+    if (server.data.every(isModelShaped)) {
       return { version: server.version, data: server.data }
     }
-    // Payload is well-formed but has zero overlap with the bundle. Either the
-    // server team shipped a wholesale replacement (needs a client build with
-    // matching profiles first) or the payload is misconfigured. Either way,
-    // adopting it would wipe local state — fall back to bundle and log.
+    // Version and length look right but at least one entry is not a model. A
+    // malformed payload must not drive retirement, so fall back and log.
     console.warn(
-      `[pickModelsDefaults] Server payload rejected: ${server.data.length} model id(s) with zero overlap ` +
-        `against the ${defaultModels.length} bundled defaults. Falling back to the bundled lineup.`,
+      `[pickModelsDefaults] Server payload rejected: ${server.data.filter((m) => !isModelShaped(m)).length} of ` +
+        `${server.data.length} entries are missing id/model/provider. Falling back to the bundled lineup.`,
     )
   }
   return { version: defaultModelsVersion, data: defaultModels }

@@ -4,8 +4,9 @@
 
 import type { Settings } from '@/config/settings'
 import { ensureGatewayModels, getGatewaySharedModels } from '@/inference/gateway-models'
+import { supportedModels } from '@/inference/routes'
 import { safeErrorHandler } from '@/middleware/error-handling'
-import { defaultModels, defaultModelsVersion } from '@shared/defaults/models'
+import { defaultModels, defaultModelsVersion, type SharedModel } from '@shared/defaults/models'
 import { Elysia } from 'elysia'
 
 /**
@@ -19,13 +20,52 @@ import { Elysia } from 'elysia'
  * release. See "Reconciled defaults and version bumps" in AGENTS.md.
  */
 /**
- * Shipped defaults plus any inference-gateway models this deployment configured.
+ * True when this deployment can actually route a shipped default model.
  *
- * When the gateway adds models the payload has to out-version the client's
- * bundled copy, or `pickDefaults` keeps the bundle and the extra models never
- * appear in the picker. Bumping by one preserves that comparison across future
- * upstream bumps, and appending (rather than replacing) keeps the id overlap
- * `pickDefaults` requires before it will trust a server payload.
+ * The bundled defaults describe Thunderbolt's hosted lineup, and every one of
+ * them needs a provider credential that a self-hosted backend usually does not
+ * have: `opus-4.8` routes to Anthropic, `deepseek-v4-flash` to Fireworks,
+ * `glm-5-2` to Tinfoil. Advertising them regardless is why a self-host with only
+ * `THUNDERBOLT_INFERENCE_URL` configured showed three models in the picker that
+ * fail the moment you send to them.
+ *
+ * Keyed off the routing table rather than the model's `provider` field, because
+ * `provider` is the UI-facing transport ("thunderbolt") and hides which upstream
+ * actually serves the request.
+ */
+const canServeDefaultModel = (model: SharedModel, settings: Settings): boolean => {
+  const routed = supportedModels[model.model]
+  if (routed) {
+    switch (routed.provider) {
+      case 'anthropic':
+        return !!settings.anthropicApiKey
+      case 'fireworks':
+        return !!settings.fireworksApiKey
+      case 'mistral':
+        return !!settings.mistralApiKey
+      case 'thunderbolt-inference':
+        return !!settings.thunderboltInferenceUrl && !!settings.thunderboltInferenceApiKey
+      default:
+        return false
+    }
+  }
+  // Not in the routing table: the only shipped case is Tinfoil, which the client
+  // reaches through this backend's proxy and which needs an enclave key.
+  return model.provider === 'tinfoil' && !!settings.tinfoilApiKey
+}
+
+/**
+ * The models this deployment can actually serve: shipped defaults it holds
+ * credentials for, plus everything its inference gateway advertises.
+ *
+ * The payload has to out-version the client's bundled copy or `pickModelsDefaults`
+ * keeps the bundle, so any deviation from the shipped set bumps the version by
+ * one — that also preserves the comparison across future upstream bumps.
+ *
+ * Omitting an unservable default is what retires it client-side:
+ * `cleanupRemovedDefaults` soft-deletes system rows missing from this list. It
+ * only touches rows with `isSystem = 1` and a `defaultHash`, so anything the user
+ * added themselves is untouched.
  */
 const buildModelDefaults = async (settings: Settings) => {
   // Refresh discovery here rather than at boot: /config is fetched on every app
@@ -33,10 +73,23 @@ const buildModelDefaults = async (settings: Settings) => {
   // makes this a no-op.
   await ensureGatewayModels(settings)
   const gatewayModels = getGatewaySharedModels(settings)
-  if (gatewayModels.length === 0) {
+  const servableDefaults = defaultModels.filter((model) => canServeDefaultModel(model, settings))
+  const data = [...servableDefaults, ...gatewayModels]
+
+  // Nothing to correct: this deployment serves precisely the shipped lineup.
+  if (gatewayModels.length === 0 && servableDefaults.length === defaultModels.length) {
     return { version: defaultModelsVersion, data: defaultModels }
   }
-  return { version: defaultModelsVersion + 1, data: [...defaultModels, ...gatewayModels] }
+
+  // Refuse to publish an empty lineup. A misconfigured backend (no provider keys
+  // and an unreachable gateway) would otherwise retire every model on every
+  // client, and an offline gateway is a transient state, not a decision to strip
+  // the app. The bundle is the floor in that case, wrong-but-present.
+  if (data.length === 0) {
+    return { version: defaultModelsVersion, data: defaultModels }
+  }
+
+  return { version: defaultModelsVersion + 1, data }
 }
 
 export const createConfigRoutes = (settings: Settings) =>
