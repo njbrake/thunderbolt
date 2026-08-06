@@ -91,6 +91,46 @@ const initializeDatabase = async (appDirPath: string): Promise<{ db: AnyDrizzleD
   return { db, database }
 }
 
+/**
+ * Ceiling for the first database query. Generous: the work behind it is a WASM
+ * compile plus a storage open, which is sub-second on a warm profile but can be
+ * seconds on a cold one, so this is a stuck-detector rather than a perf budget.
+ */
+export const dbReadyTimeoutMs = 30_000
+
+export type DatabaseReadyOutcome = 'ready' | 'timed_out' | 'failed'
+
+/**
+ * Resolve the database's first query with a bound, so a database that never
+ * opens reports instead of hanging. Never rejects: the caller turns every
+ * non-'ready' outcome into an error screen.
+ */
+export const waitForDatabaseReady = async (
+  db: Pick<AnyDrizzleDatabase, 'get'>,
+  timeoutMs: number = dbReadyTimeoutMs,
+): Promise<DatabaseReadyOutcome> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<DatabaseReadyOutcome>((resolve) => {
+    timer = setTimeout(() => resolve('timed_out'), timeoutMs)
+  })
+  try {
+    return await Promise.race([
+      (async (): Promise<DatabaseReadyOutcome> => {
+        try {
+          await db.get(sql`select 1`)
+          return 'ready'
+        } catch (error) {
+          console.error('Database failed its first query:', error)
+          return 'failed'
+        }
+      })(),
+      timeout,
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 type TrayInitResult = { tray: TrayIcon | undefined; window: Window | undefined }
 
 const initializeTray = async (): Promise<TrayInitResult> => {
@@ -204,9 +244,25 @@ const executeInitializationSteps = async (httpClient?: HttpClient): Promise<Hand
   // Step 2b: Trivial first query. PowerSync defers its heavy ready gate (WASM
   // compile, OPFS open, schema replace) to the first query — absorb it here so
   // step4 measures only the reconcile work itself.
-  await time('step2b_db_ready', async () => {
-    await db.get(sql`select 1`)
-  })
+  //
+  // Bounded on purpose. This is where a locked or unusable local database
+  // actually surfaces, and `createAppDir` cannot catch it first: on web it just
+  // returns the virtual path 'app-data' without touching OPFS, and the step0_5
+  // probe only opens IndexedDB. An unbounded await here renders the loading
+  // spinner forever, which looks identical to a slow network and hides the one
+  // remedy that works — clearing the local database, which the error screen
+  // offers. Reported as DATABASE_INIT_FAILED so the user gets that affordance.
+  const dbReadyOutcome = await time('step2b_db_ready', () => waitForDatabaseReady(db))
+  if (dbReadyOutcome !== 'ready') {
+    const dbReadyError = createHandleError(
+      'DATABASE_INIT_FAILED',
+      dbReadyOutcome === 'timed_out'
+        ? `Database did not become ready within ${dbReadyTimeoutMs / 1000}s`
+        : 'Database failed its first query',
+    )
+    trackError(dbReadyError, { initialization_step: 'db_ready', outcome: dbReadyOutcome })
+    return { success: false, error: dbReadyError }
+  }
 
   // Step 2d: Build the unified full-text search index (THU-766). Idempotent —
   // rebuilds only when missing or the schema version bumped. Runs against the
