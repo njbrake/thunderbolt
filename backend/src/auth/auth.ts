@@ -157,38 +157,27 @@ export const createAuth = (database: typeof DbType, emailDeps: AuthEmailDeps = {
       schema,
     }),
     trustedOrigins,
-    // Land OAuth/SSO failures on the app, not on the API. Better Auth otherwise
-    // falls back to `${baseURL}/error` (see better-auth's oauth2/state.mjs), and
-    // baseURL is the backend, which serves no such route — so a recoverable error
-    // like an expired or stale `state` cookie renders a bare "NOT_FOUND" on the
-    // API domain instead of returning the user to a page that can retry.
-    // Only observable when the app and API are on separate origins; where one
-    // origin proxies both, the SPA's catch-all already absorbed this.
-    onAPIError: { errorURL: settings.appUrl },
-    account: {
-      ...(ssoEnabled && {
+    // Land auth failures on the app, not on the API. Better Auth otherwise
+    // resolves its error redirect as `${baseURL}/error` (see better-auth's
+    // oauth2/state.mjs), and baseURL is the backend, which serves no HTML — so a
+    // recoverable error like a stale `state` cookie renders a bare "NOT_FOUND" on
+    // the API domain instead of a page the user can retry from. Only observable
+    // when the app and API are on separate origins; where one origin proxies
+    // both, the SPA's catch-all already absorbed this.
+    //
+    // Points at /auth-error rather than the app root on purpose: in SSO mode the
+    // root is behind the auth gate, which sends unauthenticated users to
+    // /sso-redirect, which starts a new IdP round-trip on mount. A persistent
+    // failure (unlinked account, IdP misconfiguration) would loop through the
+    // IdP forever. /auth-error is unguarded and terminal.
+    onAPIError: { errorURL: `${settings.appUrl}/auth-error` },
+    ...(ssoEnabled && {
+      account: {
         accountLinking: {
           trustedProviders: ['sso'],
         },
-      }),
-      // When the app and the API are on different origins, the OAuth `state`
-      // cookie is set on a cross-site request and browsers may drop it —
-      // Firefox logs "Cookie __Secure-better-auth.state has been rejected
-      // because it is in a cross-site context", and Safari blocks cross-site
-      // cookies outright. Better Auth then fails the callback with
-      // `state_security_mismatch` and the sign-in dies after a *successful*
-      // IdP authentication.
-      //
-      // Safe here because a database is configured, so `storeStateStrategy`
-      // defaults to "database": the authoritative state is a single-use
-      // verification row in Postgres and is still fully validated. The cookie
-      // was only an additional binding check, which is why Better Auth
-      // provides this escape hatch.
-      //
-      // Left on for same-origin deployments (Compose, ALB, k8s ingress), where
-      // the cookie is first-party and that extra layer costs nothing.
-      ...(new URL(settings.appUrl).origin !== backendOrigin && { skipStateCookieCheck: true }),
-    },
+      },
+    }),
     // NOTE: Uses in-memory storage by default — not shared across instances in
     // horizontally-scaled deployments. Provides single-instance defence only.
     // TODO(THU-113): Replace with proof-of-work challenge (ALTCHA) for distributed protection.
