@@ -2,9 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { describe, expect, it, test } from 'bun:test'
+import { afterEach, describe, expect, it, test } from 'bun:test'
 import type { ToolCallOptions } from 'ai'
 import { z } from 'zod'
+import { useConfigStore } from '@/api/config-store'
 import type { HttpClient } from '@/contexts'
 import type { ToolConfig } from '@/types'
 import { createWebToolBudget } from '@/ai/web-tool-budget'
@@ -267,5 +268,47 @@ describe('getAvailableTools (injected context)', () => {
       context({ settings: { experimentalFeatureTasks: false, integrationsProIsEnabled: true } }),
     )
     expect(tools.some((tool) => tool.name === 'search')).toBe(true)
+  })
+})
+
+// The web tools are Exa-backed through the backend, so a deployment without that
+// credential answers 503 on /search and throws on /pro/fetch-content. The user's
+// own gates cannot know that, which is why `GET /config` reports it.
+describe('getAvailableTools web tool deployment gate', () => {
+  const proContext = () => context({ settings: { experimentalFeatureTasks: false, integrationsProIsEnabled: true } })
+
+  afterEach(() => {
+    useConfigStore.setState({ config: {} })
+  })
+
+  it('withdraws the web tools when the deployment reports no search credential', async () => {
+    useConfigStore.setState({ config: { webSearchEnabled: false } })
+
+    const names = (await getAvailableTools(stubHttpClient, undefined, proContext())).map((tool) => tool.name)
+
+    // Both, not just `search`: one credential backs the pair.
+    expect(names).not.toContain('search')
+    expect(names).not.toContain('fetch_content')
+    // The user's Pro preference is untouched, so non-web tools still load.
+    expect(names).toContain('render_html')
+  })
+
+  it('offers the web tools when the deployment reports a search credential', async () => {
+    useConfigStore.setState({ config: { webSearchEnabled: true } })
+
+    const names = (await getAvailableTools(stubHttpClient, undefined, proContext())).map((tool) => tool.name)
+
+    expect(names).toContain('search')
+    expect(names).toContain('fetch_content')
+  })
+
+  it('offers the web tools when the flag is absent, so an older backend is unaffected', async () => {
+    // A backend predating this field, or a client that has not fetched config yet.
+    // Only an explicit `false` withdraws the tools.
+    useConfigStore.setState({ config: {} })
+
+    const names = (await getAvailableTools(stubHttpClient, undefined, proContext())).map((tool) => tool.name)
+
+    expect(names).toContain('search')
   })
 })

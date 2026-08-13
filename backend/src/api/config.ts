@@ -99,6 +99,17 @@ export const createConfigRoutes = (settings: Settings) =>
     // contract reads as a positive capability ("enabled").
     builtInAgentEnabled: !settings.disableBuiltInAgent,
     allowCustomAgents: settings.allowCustomAgents,
+    // Whether this deployment can service the `search` and `fetch_content` tools.
+    // Both are backed by Exa through the backend, so one credential governs both:
+    // `/search` answers 503 "Search service is not configured" without it, and
+    // `/pro/fetch-content` throws.
+    //
+    // The frontend needs this because it decides which tools to hand the model,
+    // and it cannot see the backend's credentials. Without the flag it offered web
+    // search unconditionally, so on a deployment with no EXA_API_KEY the model
+    // would reach for it mid-answer and the tool call would fail — which reads as
+    // a broken app rather than one without web access.
+    webSearchEnabled: !!settings.exaApiKey,
     // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
     minAppVersion: settings.minAppVersion || undefined,
     defaults: {

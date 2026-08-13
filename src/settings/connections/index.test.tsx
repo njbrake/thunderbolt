@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { useConfigStore } from '@/api/config-store'
 import { createMcpServer, createMcpServerWithCredentials, getAllMcpServers, getMcpServerCredentials } from '@/dal'
 import { resetTestDatabase, setupTestDatabase, teardownTestDatabase } from '@/dal/test-utils'
 import { getDb } from '@/db/database'
@@ -74,6 +75,9 @@ describe('ConnectionsPage list', () => {
 
   afterEach(() => {
     cleanup()
+    // Module-scoped and persisted, so a value set here would follow this worker
+    // into every later test file.
+    useConfigStore.setState({ config: {} })
   })
 
   it('shows the pre-baked integrations and updates when mcp_servers changes', async () => {
@@ -116,6 +120,24 @@ describe('ConnectionsPage list', () => {
     })
 
     expect(screen.getByText('Second Server')).toBeInTheDocument()
+  })
+
+  // Its two tools are Exa-backed through the backend, so a deployment holding no
+  // such credential cannot service either one. Listing it anyway offers a toggle
+  // that changes nothing.
+  it('omits the Thunderbolt integration when the deployment reports no web search', async () => {
+    useConfigStore.setState({ config: { webSearchEnabled: false } })
+
+    renderWithReactivity(<ConnectionsPage />, {
+      tables: ['mcp_servers'],
+      wrapper: McpProviderWrapper,
+    })
+
+    // Wait on a sibling that is never gated, so this does not pass merely because
+    // the list had not rendered yet.
+    await waitForElement(() => screen.queryByText('Google'))
+    expect(screen.getByText('Microsoft')).toBeInTheDocument()
+    expect(screen.queryByText('Thunderbolt')).not.toBeInTheDocument()
   })
 
   it('falls back to the cleaned URL for a server without a name', async () => {

@@ -5,6 +5,7 @@
 import { useMemo, type Dispatch } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
+import { selectWebSearchEnabled, useConfigStore } from '@/api/config-store'
 import { AppLogo } from '@/components/app-logo'
 import type { ToolItem } from '@/components/available-tools'
 import { GoogleIcon, MicrosoftIcon } from '@/components/provider-icons'
@@ -35,21 +36,32 @@ export const useIntegrationsController = ({ db, dispatch }: IntegrationsControll
   const integrationSettings = useSettings({ integrations_pro_is_enabled: false })
   const { data: status, isLoading: isStatusLoading } = useIntegrationStatus()
   const { data: proStatus } = useQuery({ queryKey: ['proStatus'], queryFn: getProStatus })
+  const webSearchEnabled = useConfigStore((state) => selectWebSearchEnabled(state.config))
   const areIntegrationsReady =
     !integrationSettings.integrationsProIsEnabled.isLoading && !isStatusLoading && proStatus !== undefined
 
   const integrations = useMemo((): Integration[] => {
     const isProUser = proStatus?.isProUser ?? false
     return [
-      {
-        id: 'thunderbolt',
-        name: 'Thunderbolt',
-        provider: 'thunderbolt-pro',
-        connectLabel: 'Get Pro',
-        icon: <AppLogo size={20} />,
-        isEnabled: isProUser && integrationSettings.integrationsProIsEnabled.value,
-        isConnected: isProUser,
-      },
+      // Both of this integration's tools are Exa-backed through the backend, so a
+      // deployment holding no such credential cannot service either. Omitted
+      // entirely rather than shown disabled: `isConnected` here is a client-side
+      // constant, so a deployment gate on `isEnabled` alone would render a toggle
+      // that moves and changes nothing. This matches how Google and Microsoft are
+      // already driven by server-reported status.
+      ...(webSearchEnabled
+        ? [
+            {
+              id: 'thunderbolt',
+              name: 'Thunderbolt',
+              provider: 'thunderbolt-pro' as const,
+              connectLabel: 'Get Pro',
+              icon: <AppLogo size={20} />,
+              isEnabled: isProUser && integrationSettings.integrationsProIsEnabled.value,
+              isConnected: isProUser,
+            },
+          ]
+        : []),
       {
         id: 'google',
         name: 'Google',
@@ -71,7 +83,7 @@ export const useIntegrationsController = ({ db, dispatch }: IntegrationsControll
         userEmail: status?.microsoftEmail ?? undefined,
       },
     ]
-  }, [integrationSettings.integrationsProIsEnabled.value, proStatus?.isProUser, status])
+  }, [integrationSettings.integrationsProIsEnabled.value, proStatus?.isProUser, status, webSearchEnabled])
 
   const toolConfigsByProvider: Record<Integration['provider'], { name: string; description: string }[]> = {
     'thunderbolt-pro': proToolConfigs,

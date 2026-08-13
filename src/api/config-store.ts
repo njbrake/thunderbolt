@@ -13,6 +13,8 @@ export type AppConfig = {
    *  built-in agent shown, custom agents allowed. */
   builtInAgentEnabled?: boolean
   allowCustomAgents?: boolean
+  /** Whether the backend holds the credential behind `search` and `fetch_content`. */
+  webSearchEnabled?: boolean
   /** Minimum semver string the server allows. Clients below this are hard-blocked
    *  until they upgrade. Absent/empty = no enforcement. */
   minAppVersion?: string
@@ -51,3 +53,13 @@ export const selectBuiltInAgentEnabled = (config: AppConfig): boolean => config.
 
 /** Whether the UI offers adding custom agents. Absent config defaults to allowed. */
 export const selectAllowCustomAgents = (config: AppConfig): boolean => config.allowCustomAgents !== false
+
+/**
+ * Whether to hand the model the web tools (`search`, `fetch_content`).
+ *
+ * Absent defaults to enabled, matching the other flags here: a backend predating
+ * this field, or a client that has not fetched config yet, keeps the behavior it
+ * had rather than silently losing web access. Only an explicit `false` — a
+ * backend saying it holds no Exa credential — withdraws the tools.
+ */
+export const selectWebSearchEnabled = (config: AppConfig): boolean => config.webSearchEnabled !== false

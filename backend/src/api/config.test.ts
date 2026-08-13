@@ -59,6 +59,17 @@ describe('Config Routes', () => {
       expect(forbidden.body.allowCustomAgents).toBe(false)
     })
 
+    // The frontend decides which tools to hand the model and cannot see the
+    // backend's credentials. Without this flag it offered web search regardless,
+    // so a deployment with no EXA_API_KEY failed the tool call mid-answer.
+    it('reports webSearchEnabled from whether an Exa credential is configured', async () => {
+      const withKey = await fetchConfig(createTestSettings({ exaApiKey: 'exa-test' }))
+      expect(withKey.body.webSearchEnabled).toBe(true)
+
+      const withoutKey = await fetchConfig(createTestSettings({ exaApiKey: '' }))
+      expect(withoutKey.body.webSearchEnabled).toBe(false)
+    })
+
     it('omits minAppVersion when MIN_APP_VERSION is unset', async () => {
       const { body } = await fetchConfig(createTestSettings())
       expect(body.minAppVersion).toBeUndefined()
