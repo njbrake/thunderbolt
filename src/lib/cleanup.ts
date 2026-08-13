@@ -6,6 +6,7 @@ import { disposeAllAdapters } from '@/acp/adapter-cache'
 import { clearIrohClientSecret } from '@/acp/iroh/iroh-transport'
 import { disconnectSync, setSyncEnabled } from '@/db/powersync/sync-state'
 import { clearAuthToken, clearDeviceId, clearUserCacheSecret } from '@/lib/auth-token'
+import { resetCodecState } from '@/db/encryption'
 import { resetAppDir } from '@/lib/fs'
 import { clearCachedSession } from '@/lib/session-cache'
 import { handleFullWipe } from '@/services/encryption'
@@ -14,16 +15,29 @@ import { initialLocalSettings, useLocalSettingsStore } from '@/stores/local-sett
 type ClearLocalDataOptions = {
   /** Disable PowerSync sync connection (default: true) */
   disableSync?: boolean
-  /** Clear all encryption keys from IndexedDB + invalidate CK cache (default: true) */
-  clearEncryptionKeys?: boolean
   /** Delete the database and app files via resetAppDir (default: true) */
   clearDatabase?: boolean
+  /**
+   * Delete the persisted encryption keys from IndexedDB (default: follows
+   * {@link clearDatabase}).
+   *
+   * Defaulting to `clearDatabase` rather than `true` is deliberate: the keys are
+   * the only thing that makes retained rows readable, so destroying them while
+   * keeping the data leaves the user with a database they cannot decrypt. Pass it
+   * explicitly to override.
+   */
+  clearEncryptionKeys?: boolean
   /** Clear auth token and device ID from localStorage (default: true) */
   clearAuth?: boolean
   /** Test seams for the sync teardown. Production omits these. */
   syncDeps?: {
     setSyncEnabled?: typeof setSyncEnabled
     disconnectSync?: typeof disconnectSync
+  }
+  /** Test seams for the encryption teardown. Production omits these. */
+  encryptionDeps?: {
+    fullWipe?: typeof handleFullWipe
+    resetCodec?: typeof resetCodecState
   }
 }
 
@@ -34,9 +48,18 @@ type ClearLocalDataOptions = {
  * Does NOT reload the page or navigate — callers handle that.
  */
 export const clearLocalData = async (options?: ClearLocalDataOptions): Promise<void> => {
-  const { disableSync = true, clearEncryptionKeys = true, clearDatabase = true, clearAuth = true } = options ?? {}
+  // `clearEncryptionKeys` is destructured after `clearDatabase` so it can default
+  // to it.
+  const {
+    disableSync = true,
+    clearDatabase = true,
+    clearEncryptionKeys = clearDatabase,
+    clearAuth = true,
+  } = options ?? {}
   const forgetSyncPreference = options?.syncDeps?.setSyncEnabled ?? setSyncEnabled
   const closeSyncConnection = options?.syncDeps?.disconnectSync ?? disconnectSync
+  const destroyKeys = options?.encryptionDeps?.fullWipe ?? handleFullWipe
+  const forgetCachedKeys = options?.encryptionDeps?.resetCodec ?? resetCodecState
 
   // Tear down every warm ACP connection first so no agent transport survives
   // across user identities (sign-out, account deletion, device revocation all
@@ -67,12 +90,17 @@ export const clearLocalData = async (options?: ClearLocalDataOptions): Promise<v
     }
   }
 
-  if (clearEncryptionKeys) {
-    try {
-      await handleFullWipe()
-    } catch (error) {
-      console.error('[clearLocalData] Failed to clear encryption keys:', error)
+  try {
+    if (clearEncryptionKeys) {
+      await destroyKeys()
+    } else {
+      // The data is staying, so the keys that decrypt it have to stay too. Drop
+      // the in-memory CK and the cross-tab setup flag anyway, so no live key
+      // material outlives the identity that unlocked it.
+      forgetCachedKeys()
     }
+  } catch (error) {
+    console.error('[clearLocalData] Failed to clear encryption keys:', error)
   }
 
   if (clearDatabase) {
