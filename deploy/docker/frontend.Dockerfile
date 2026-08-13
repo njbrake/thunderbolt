@@ -45,6 +45,12 @@ FROM nginx:alpine
 ENV THUNDERBOLT_BACKEND_HOST=backend
 ENV THUNDERBOLT_BACKEND_PORT=8000
 
+# DNS server nginx resolves THUNDERBOLT_BACKEND_HOST against. The default is
+# Docker's embedded resolver, which exists only inside a Docker network, so any
+# other platform must override this or the `/v1/` proxy answers 502 for every
+# request. Use the nameserver from the container's /etc/resolv.conf.
+ENV THUNDERBOLT_BACKEND_RESOLVER=127.0.0.11
+
 COPY deploy/config/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY deploy/config/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /app/dist /usr/share/nginx/html

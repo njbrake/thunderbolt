@@ -8,7 +8,7 @@
 # Railway has no shared path-based ingress, so unlike the Docker Compose, Helm,
 # and Pulumi paths this deploys four separately-addressed public services and
 # wires them together by URL. The frontend's nginx `/v1/` proxy is unused here
-# (its `resolver 127.0.0.11` is Docker-specific); the SPA calls the backend
+# (its resolver and upstream default to Docker's); the SPA calls the backend
 # domain directly instead, which is why VITE_THUNDERBOLT_CLOUD_URL is absolute.
 #
 # Idempotent: re-running skips services that already exist and refreshes

@@ -15,13 +15,21 @@ import {
   ResponsiveModalTitle,
 } from '@/components/ui/responsive-modal'
 import { SelectableCard, type DataOption } from '@/components/ui/selectable-card'
-import { clearLocalData } from '@/lib/cleanup'
+import { clearLocalData as defaultClearLocalData } from '@/lib/cleanup'
 
 type RevokedDeviceModalProps = {
   open: boolean
+  /**
+   * Injectable for tests. Defaults to the real {@link clearLocalData} — the
+   * shipped UI never overrides this. Lets the test pass a stub instead of
+   * `mock.module('@/lib/cleanup', ...)`, which leaks into every other file that
+   * imports the real module (see `docs/development/testing.md` §65). Mirrors the
+   * seam on {@link LogoutModal}.
+   */
+  clearLocalData?: typeof defaultClearLocalData
 }
 
-export const RevokedDeviceModal = ({ open }: RevokedDeviceModalProps) => {
+export const RevokedDeviceModal = ({ open, clearLocalData = defaultClearLocalData }: RevokedDeviceModalProps) => {
   const [selectedOption, setSelectedOption] = useState<DataOption>('keep')
   const [isProcessing, setIsProcessing] = useState(false)
 

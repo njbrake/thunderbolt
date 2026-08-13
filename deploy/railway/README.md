@@ -17,8 +17,8 @@ consequences:
 - **The SPA talks to the backend cross-origin.** `VITE_THUNDERBOLT_CLOUD_URL` is set
   to an absolute `https://<backend>/v1` instead of the same-origin `/v1` default, and
   the backend's `CORS_ORIGINS` allows the frontend domain. The frontend image's nginx
-  `/v1/` proxy block goes unused here, which is deliberate: its `resolver 127.0.0.11`
-  is Docker's embedded DNS and does not exist on Railway.
+  `/v1/` proxy block goes unused here, which is deliberate: the same-site cookie
+  split needs the absolute API origin regardless of whether the proxy works.
 - **The OIDC callback lives on the backend domain**, not the app domain, since Better
   Auth serves `/v1/api/auth/sso/callback/sso`. The web origin stays the frontend
   domain. `deploy/pulumi/src/services.ts` makes the same split for its API hostname.
@@ -350,12 +350,14 @@ same thing, and it is the most likely reason a deploy appears not to reach a pho
 - **The frontend's own `/v1/` proxy is dead here, and that is expected.** Requesting
   `https://<app-domain>/v1/anything` returns 502. Two reasons, both fine: the app
   never uses it (`VITE_THUNDERBOLT_CLOUD_URL` is the absolute API origin, which the
-  same-site split requires), and `nginx.conf.template` is written for Compose —
-  `THUNDERBOLT_BACKEND_HOST` defaults to `backend` and the `resolver 127.0.0.11` is
+  same-site split requires), and the proxy's defaults are written for Compose —
+  `THUNDERBOLT_BACKEND_HOST` is `backend` and `THUNDERBOLT_BACKEND_RESOLVER` is
   Docker's embedded DNS, neither of which exists on Railway (the private name would
-  be `backend.railway.internal`). Do not debug the app against a relative `/v1/`
-  URL on this deployment; use `https://<api-domain>/v1/...`. It is an easy trap:
-  the 502 looks like a backend outage when the backend is healthy.
+  be `backend.railway.internal`). Both are overridable now, so a future single-domain
+  setup could point the proxy at a real resolver, but leaving it unused is right here.
+  Do not debug the app against a relative `/v1/` URL on this deployment; use
+  `https://<api-domain>/v1/...`. It is an easy trap: the 502 looks like a backend
+  outage when the backend is healthy.
 
 ## Troubleshooting
 

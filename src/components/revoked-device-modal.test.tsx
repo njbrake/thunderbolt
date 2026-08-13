@@ -10,10 +10,11 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { RevokedDeviceModal } from './revoked-device-modal'
 
+// Injected through the component's prop rather than `mock.module('@/lib/cleanup')`.
+// A module mock here is process-wide and outlives this file, so under `--randomize`
+// it silently replaced the real `clearLocalData` for `src/lib/cleanup.test.ts`,
+// whose assertions then saw a no-op stub.
 const mockClearLocalData = mock(() => Promise.resolve())
-mock.module('@/lib/cleanup', () => ({
-  clearLocalData: mockClearLocalData,
-}))
 
 const mockReplace = mock()
 Object.defineProperty(window, 'location', {
@@ -37,7 +38,7 @@ describe('RevokedDeviceModal', () => {
   })
 
   const renderModal = (props: Partial<{ open: boolean }> = {}) =>
-    render(<RevokedDeviceModal open={props.open ?? true} />, {
+    render(<RevokedDeviceModal open={props.open ?? true} clearLocalData={mockClearLocalData} />, {
       wrapper: createTestProvider(),
     })
 

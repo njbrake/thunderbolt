@@ -24,10 +24,18 @@ server {
     # so SSRF-style host injection from clients is not possible.
     # The `internal` directive is intentionally omitted: this is a public API
     # endpoint that the SPA calls directly from the browser.
+    #
+    # ${THUNDERBOLT_BACKEND_RESOLVER} defaults to 127.0.0.11, which is Docker's
+    # embedded DNS and exists only inside a Docker network. Every other platform
+    # needs its own nameserver here, or all `/v1/` requests through the frontend
+    # return 502 while the backend is perfectly healthy. Take the value from the
+    # container's own /etc/resolv.conf. An IP is safest, since nginx resolves a
+    # name here once at config load and refuses to start if that fails; bracket
+    # IPv6 (`[fd12::10]`), and several may be listed space-separated.
     location ^~ /v1/ {
         include /etc/nginx/snippets/security-headers.conf;
 
-        resolver 127.0.0.11 valid=10s;
+        resolver ${THUNDERBOLT_BACKEND_RESOLVER} valid=10s;
         set $backend "${THUNDERBOLT_BACKEND_HOST}";
         # No URI suffix on proxy_pass: when the host contains a variable, nginx does not
         # do prefix substitution and instead sends only the directive URI to upstream
