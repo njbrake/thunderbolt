@@ -31,9 +31,16 @@ export const getPosthogClient = (): PostHog | null => posthogClient
 const routePatterns = ['/chats/:chatThreadId'] as const
 
 /**
+ * Routes whose query string is dropped before analytics see it. `/auth-error`
+ * renders whatever `error_description` the identity provider sent, so its params
+ * are third-party text that must not reach PostHog.
+ */
+const queryStrippedRoutes = ['/auth-error'] as const
+
+/**
  * Replaces dynamic URL segments with their parameter placeholders so analytics do not collect raw IDs.
  * @param url - Full URL or pathname
- * @returns URL with pathname replaced to match the route pattern
+ * @returns URL with pathname replaced to match the route pattern, and the query removed on sensitive routes
  */
 export const sanitizeUrl = (url: string): string => {
   const pathname = (() => {
@@ -43,6 +50,10 @@ export const sanitizeUrl = (url: string): string => {
       return url.startsWith('/') ? url : `/${url}`
     }
   })()
+
+  if (queryStrippedRoutes.some((route) => route === pathname)) {
+    return url.split(/[?#]/)[0]
+  }
 
   for (const pattern of routePatterns) {
     const regex = new RegExp(`^${pattern.replace(/:[^/]+/g, '[^/]+')}$`)

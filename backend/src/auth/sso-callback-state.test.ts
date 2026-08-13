@@ -5,7 +5,7 @@
 import * as settingsModule from '@/config/settings'
 import { createTestDb } from '@/test-utils/db'
 import { createTestSettings } from '@/test-utils/settings'
-import { afterAll, beforeAll, describe, expect, it, spyOn } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { Elysia } from 'elysia'
 
 const oidcIssuerUrl = 'https://oidc.test'
@@ -48,13 +48,9 @@ describe('SSO callback state binding', () => {
   const savedFetch = globalThis.fetch
   const savedOrigins = process.env.TRUSTED_ORIGINS
 
-  beforeAll(async () => {
+  beforeAll(() => {
     globalThis.fetch = Object.assign(stubbedFetch, { preconnect: () => {} }) as unknown as typeof fetch
     process.env.TRUSTED_ORIGINS = `${oidcIssuerUrl},${appUrl}`
-
-    const testEnv = await createTestDb()
-    cleanup = testEnv.cleanup
-
     getSettingsSpy = spyOn(settingsModule, 'getSettings').mockReturnValue(
       createTestSettings({
         authMode: 'oidc',
@@ -65,19 +61,29 @@ describe('SSO callback state binding', () => {
         betterAuthUrl: 'http://localhost:8000',
       }),
     )
+  })
+
+  afterAll(() => {
+    getSettingsSpy?.mockRestore()
+    globalThis.fetch = savedFetch
+    process.env.TRUSTED_ORIGINS = savedOrigins
+  })
+
+  // One transaction per test, rolled back after it, per backend/docs/testing.md.
+  // These tests write verification rows, so sharing a transaction would let one
+  // test's consumed state leak into the next.
+  beforeEach(async () => {
+    const testEnv = await createTestDb()
+    cleanup = testEnv.cleanup
+    tokenRequests = 0
 
     const { createAuth } = await import('./auth')
     const app = new Elysia({ prefix: '/v1' }).mount(createAuth(testEnv.db).handler)
     handle = (request) => app.handle(request)
   }, 60_000)
 
-  afterAll(async () => {
-    getSettingsSpy?.mockRestore()
-    globalThis.fetch = savedFetch
-    process.env.TRUSTED_ORIGINS = savedOrigins
-    if (cleanup) {
-      await cleanup().catch(() => {})
-    }
+  afterEach(async () => {
+    await cleanup()
   }, 60_000)
 
   /** Starts a sign-in and returns its single-use state plus the cookie that binds it. */

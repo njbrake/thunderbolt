@@ -50,14 +50,27 @@ describe('createAuth options', () => {
 
   it('never skips the OAuth state cookie check', () => {
     // The signed state cookie is the only thing binding a callback to the browser
-    // that started the flow — the verification row makes state single-use but not
+    // that started the flow: the verification row makes state single-use but not
     // browser-bound. Skipping the check reopens login CSRF, so split-origin
     // deployments must keep the app and API same-site instead.
-    const sameSite = optionsFor({ appUrl: 'https://app.example.com', betterAuthUrl: 'https://api.example.com' })
-    const crossSite = optionsFor({ appUrl: 'https://app.vercel.app', betterAuthUrl: 'https://api.up.railway.app' })
+    //
+    // Both cases run in SSO mode, where `account` actually exists — in consumer
+    // mode it is undefined and the assertion would pass without exercising
+    // anything.
+    const sameSite = optionsFor({
+      authMode: 'oidc',
+      appUrl: 'https://app.example.com',
+      betterAuthUrl: 'https://api.example.com',
+    })
+    const crossSite = optionsFor({
+      authMode: 'oidc',
+      appUrl: 'https://app.vercel.app',
+      betterAuthUrl: 'https://api.up.railway.app',
+    })
 
-    expect(sameSite.account ?? {}).not.toHaveProperty('skipStateCookieCheck')
-    expect(crossSite.account ?? {}).not.toHaveProperty('skipStateCookieCheck')
+    expect(sameSite.account).toBeDefined()
+    expect(sameSite.account).not.toHaveProperty('skipStateCookieCheck')
+    expect(crossSite.account).not.toHaveProperty('skipStateCookieCheck')
   })
 
   it('trusts the sso provider for account linking only in SSO mode', () => {

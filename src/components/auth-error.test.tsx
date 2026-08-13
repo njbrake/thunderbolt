@@ -5,18 +5,15 @@
 import '@/testing-library'
 import '@testing-library/jest-dom'
 import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from 'bun:test'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import AuthError from './auth-error'
 
 const replace = mock(() => {})
 const originalLocation = window.location
 
-Object.defineProperty(window, 'location', {
-  value: { ...originalLocation, replace },
-  writable: true,
-  configurable: true,
-})
+const setLocation = (value: Location | (Location & { replace: typeof replace })) =>
+  Object.defineProperty(window, 'location', { value, writable: true, configurable: true })
 
 const renderAt = (query: string) =>
   render(
@@ -28,6 +25,16 @@ const renderAt = (query: string) =>
   )
 
 describe('AuthError', () => {
+  beforeAll(() => {
+    setLocation({ ...originalLocation, replace })
+  })
+
+  // The stub is global, so leaving it in place would follow this worker into
+  // every later test file.
+  afterAll(() => {
+    setLocation(originalLocation)
+  })
+
   afterEach(() => {
     replace.mockClear()
   })
@@ -52,20 +59,21 @@ describe('AuthError', () => {
     renderAt('?state=state_not_found')
 
     expect(screen.getByText(/took too long to complete/)).toBeInTheDocument()
-    expect(screen.getByText('state_not_found')).toBeInTheDocument()
+    expect(screen.getByText('Error code: state_not_found')).toBeInTheDocument()
   })
 
   it('surfaces an unmapped code so support has the real signal', () => {
     renderAt('?error=idp_exploded')
 
     expect(screen.getByText(/contact your administrator/)).toBeInTheDocument()
-    expect(screen.getByText('idp_exploded')).toBeInTheDocument()
+    expect(screen.getByText('Error code: idp_exploded')).toBeInTheDocument()
   })
 
-  it('prefers the provider description over the bare code', () => {
+  it('shows the provider description alongside the code, not instead of it', () => {
     renderAt('?error=invalid_request&error_description=Client+not+registered')
 
     expect(screen.getByText('Client not registered')).toBeInTheDocument()
+    expect(screen.getByText('Error code: invalid_request')).toBeInTheDocument()
   })
 
   it('retries from a link the user chooses to click', () => {

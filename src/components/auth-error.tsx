@@ -18,8 +18,9 @@ const staleFlowCodes = new Set([
 
 /**
  * Maps a Better Auth error code to copy that tells the user what to do next.
- * Unmapped codes get generic copy; the code itself is always shown below it so
- * an operator reading a support ticket still has the real signal.
+ * Unmapped codes get generic copy; the code is always rendered alongside it so a
+ * support ticket carries the real signal even when the provider also sent a
+ * description.
  */
 const describeAuthError = (code: string): string => {
   if (staleFlowCodes.has(code)) {
@@ -55,7 +56,8 @@ const AuthError = () => {
         <div className="flex flex-col items-center gap-2">
           <h1 className="text-4xl font-semibold tracking-tight">Sign-in failed</h1>
           <p className="text-muted-foreground">{describeAuthError(code)}</p>
-          <p className="text-[length:var(--font-size-xs)] text-muted-foreground">{description || code}</p>
+          {description && <p className="text-[length:var(--font-size-xs)] text-muted-foreground">{description}</p>}
+          <p className="text-[length:var(--font-size-xs)] text-muted-foreground">Error code: {code}</p>
         </div>
 
         <Button onClick={() => window.location.replace(isSsoMode() ? '/sso-redirect' : '/')}>Try again</Button>
