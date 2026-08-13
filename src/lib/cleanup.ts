@@ -4,7 +4,7 @@
 
 import { disposeAllAdapters } from '@/acp/adapter-cache'
 import { clearIrohClientSecret } from '@/acp/iroh/iroh-transport'
-import { setSyncEnabled } from '@/db/powersync/sync-state'
+import { disconnectSync, setSyncEnabled } from '@/db/powersync/sync-state'
 import { clearAuthToken, clearDeviceId, clearUserCacheSecret } from '@/lib/auth-token'
 import { resetAppDir } from '@/lib/fs'
 import { clearCachedSession } from '@/lib/session-cache'
@@ -20,6 +20,11 @@ type ClearLocalDataOptions = {
   clearDatabase?: boolean
   /** Clear auth token and device ID from localStorage (default: true) */
   clearAuth?: boolean
+  /** Test seams for the sync teardown. Production omits these. */
+  syncDeps?: {
+    setSyncEnabled?: typeof setSyncEnabled
+    disconnectSync?: typeof disconnectSync
+  }
 }
 
 /**
@@ -30,6 +35,8 @@ type ClearLocalDataOptions = {
  */
 export const clearLocalData = async (options?: ClearLocalDataOptions): Promise<void> => {
   const { disableSync = true, clearEncryptionKeys = true, clearDatabase = true, clearAuth = true } = options ?? {}
+  const forgetSyncPreference = options?.syncDeps?.setSyncEnabled ?? setSyncEnabled
+  const closeSyncConnection = options?.syncDeps?.disconnectSync ?? disconnectSync
 
   // Tear down every warm ACP connection first so no agent transport survives
   // across user identities (sign-out, account deletion, device revocation all
@@ -42,7 +49,19 @@ export const clearLocalData = async (options?: ClearLocalDataOptions): Promise<v
 
   if (disableSync) {
     try {
-      await setSyncEnabled(false)
+      // Whether to forget the *preference* follows whether the data is going too.
+      //
+      // Either way the live connection must close, since the auth token is
+      // cleared below and the open stream would only 401. But `setSyncEnabled`
+      // persists to localStorage, and the SSO sign-in path never re-enables it
+      // (only the consumer sign-in modal and the settings toggle do). So calling
+      // it unconditionally meant a "keep my data" sign-out turned sync off for
+      // good: the next sign-in reconnected nothing and the account looked empty.
+      if (clearDatabase) {
+        await forgetSyncPreference(false)
+      } else {
+        await closeSyncConnection()
+      }
     } catch (error) {
       console.error('[clearLocalData] Failed to disable sync:', error)
     }

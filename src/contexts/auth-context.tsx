@@ -12,6 +12,7 @@ import { clearCachedSession, getCachedSession, isCachedSessionValid, setCachedSe
 import { anonymousClient, emailOTPClient } from 'better-auth/client/plugins'
 import { createAuthClient } from 'better-auth/react'
 import { consumePendingSsoAnonAlias } from '@/lib/analytics/anonymous-promotion-sso-bridge'
+import { consumePendingSsoSync } from '@/lib/sync-sso-bridge'
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react'
 
 /**
@@ -197,6 +198,19 @@ export const AuthProvider = ({ children, cloudUrl, authClient: overrideClient }:
     }
     ssoAliasConsumedRef.current = true
     void consumePendingSsoAnonAlias(value.authClient)
+  }, [value])
+
+  // Enable sync after a completed SSO sign-in, which the consumer sign-in modal
+  // does inline but SSO cannot, because the browser leaves the page for the IdP.
+  // Without this `syncEnabled` stays at its `false` default and PowerSync never
+  // connects. Same sessionStorage hand-off and ref guard as the alias above.
+  const ssoSyncConsumedRef = useRef(false)
+  useEffect(() => {
+    if (!value?.authClient || ssoSyncConsumedRef.current) {
+      return
+    }
+    ssoSyncConsumedRef.current = true
+    void consumePendingSsoSync(value.authClient)
   }, [value])
 
   // Validate the stored token on mount via HttpClient — its afterResponse hook fires

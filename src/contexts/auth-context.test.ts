@@ -6,6 +6,7 @@ import { setupTestDatabase, teardownTestDatabase } from '@/dal/test-utils'
 import { powersyncCredentialsInvalid } from '@/db/powersync/connector'
 import { clearAuthToken, getAuthToken, setAuthToken } from '@/lib/auth-token'
 import { clearCachedSession, getCachedSession, setCachedSession } from '@/lib/session-cache'
+import { pendingSsoSyncKey } from '@/lib/sync-sso-bridge'
 import { createMockAuthClient } from '@/test-utils/auth-client'
 import { createTestProvider } from '@/test-utils/test-provider'
 import { cleanup, render } from '@testing-library/react'
@@ -319,5 +320,20 @@ describe('AuthProvider — cross-tab auth-token listener', () => {
     expect(capturedEvents).toHaveLength(1)
     expect(capturedEvents[0].type).toBe(powersyncCredentialsInvalid)
     expect(capturedEvents[0].detail).toEqual({ reason: 'session_expired' })
+  })
+
+  // The bridge function is unit-tested in src/lib/sync-sso-bridge.test.ts; this
+  // covers the wiring, which is the part that actually fixes the bug. Without the
+  // mount, `syncEnabled` stays at its `false` default on every SSO deployment and
+  // PowerSync never connects.
+  it('consumes the pending-SSO-sync marker on mount', async () => {
+    sessionStorage.setItem(pendingSsoSyncKey, '1')
+
+    renderAuthProvider()
+    await Promise.resolve()
+
+    // Consuming the marker is the observable effect: the bridge removes it before
+    // deciding anything else.
+    expect(sessionStorage.getItem(pendingSsoSyncKey)).toBeNull()
   })
 })

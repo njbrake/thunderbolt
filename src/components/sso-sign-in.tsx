@@ -11,6 +11,7 @@ import { setAuthToken } from '@/lib/auth-token'
 import { http } from '@/lib/http'
 import { isTauri } from '@/lib/platform'
 import { startSsoFlowLoopback } from '@/lib/sso-loopback'
+import { markSsoSignInPending } from '@/lib/sync-sso-bridge'
 import { isSafeUrl } from '@/lib/url-utils'
 import { useLocalSettingsStore } from '@/stores/local-settings-store'
 
@@ -65,6 +66,7 @@ const SsoSignIn = () => {
       // Tauri desktop: system browser + loopback listener (RFC 8252).
       if (isTauri()) {
         analytics.persistForSso()
+        markSsoSignInPending()
         const token = await startSsoFlowLoopback(baseUrl)
         if (token) {
           setAuthToken(token)
@@ -90,8 +92,10 @@ const SsoSignIn = () => {
         return
       }
 
-      // Persist the anon id to sessionStorage BEFORE the browser navigates away.
+      // Persist the anon id and the pending-sync marker to sessionStorage BEFORE
+      // the browser navigates away.
       analytics.persistForSso()
+      markSsoSignInPending()
       window.location.href = data.url
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

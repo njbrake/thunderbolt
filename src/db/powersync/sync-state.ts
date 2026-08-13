@@ -59,6 +59,32 @@ export const reconnectSync = async (): Promise<void> => {
 export const isSyncEnabled = (): boolean => getLocalSetting('syncEnabled')
 
 /**
+ * Tear down the live sync connection WITHOUT changing the `syncEnabled`
+ * preference.
+ *
+ * For sign-out paths that retain local data. The connection has to go, because
+ * the auth token is cleared moments later and a still-open stream would only
+ * 401 — but `setSyncEnabled(false)` also persists the preference, and nothing in
+ * the SSO sign-in path re-enables it. Using it here left sync off after every
+ * subsequent sign-in, so a "keep my data" logout silently stopped syncing
+ * forever.
+ */
+export const disconnectSync = async (): Promise<void> => {
+  try {
+    const database = getDatabaseInstance()
+    if ('disconnectFromSync' in database) {
+      await withTimeout(
+        (database as { disconnectFromSync: () => Promise<void> }).disconnectFromSync(),
+        10_000,
+        'disconnectFromSync',
+      )
+    }
+  } catch (error) {
+    console.error('Failed to disconnect from PowerSync:', error)
+  }
+}
+
+/**
  * Set sync enabled preference, connect/disconnect from PowerSync, and dispatch change event
  */
 export const setSyncEnabled = async (enabled: boolean): Promise<void> => {
