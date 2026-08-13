@@ -207,15 +207,25 @@ So a stranger who finds the Keycloak hostname can self-register and spend your
 registration in `deploy/config/keycloak-realm.json` and drives the seeded user
 from the environment:
 
-| Variable            | Default               | Purpose                             |
-| ------------------- | --------------------- | ----------------------------------- |
-| `KC_SEED_USERNAME`  | `demo`                | Username of the one seeded account   |
-| `KC_SEED_EMAIL`     | `demo@thunderbolt.io` | Its email — the Thunderbolt identity |
-| `KC_SEED_PASSWORD`  | `demo`                | Its password                         |
+| Variable               | Default                                | Purpose                                       |
+| ---------------------- | -------------------------------------- | --------------------------------------------- |
+| `KC_SEED_ID`           | a UUID shipped in the realm JSON       | Becomes the token `sub`, so it IS the identity |
+| `KC_SEED_USERNAME`     | `demo`                                 | Username of the one seeded account             |
+| `KC_SEED_EMAIL`        | `demo@thunderbolt.io`                  | Its email                                     |
+| `KC_SEED_FIRST_NAME`   | `Demo`                                 | Rendered as the signed-in user's name          |
+| `KC_SEED_LAST_NAME`    | `User`                                 | Rendered as the signed-in user's name          |
+| `KC_SEED_PASSWORD`     | `demo`                                 | Its password                                   |
 
-`setup.sh` generates `KC_SEED_PASSWORD` into `.railway-secrets.env` and sets all
-three, so a fresh Railway stack never has a guessable login. The defaults are only
-what upstream's Compose/local-dev flow expects.
+`setup.sh` sets all six, so a fresh Railway stack never has a guessable login and
+never shows "Demo User" in the sidebar. The defaults are only what upstream's
+Compose/local-dev flow expects.
+
+`KC_SEED_PASSWORD` and `KC_SEED_ID` are both written to `.railway-secrets.env`.
+The password is there because it is a secret; the id is there because it must be
+**stable**. Keycloak stamps it into the token's `sub` claim and Better Auth binds
+the Thunderbolt account to that value, so minting a fresh one on a re-run would
+orphan the existing account along with its chats. Keep that file if you want
+re-runs to preserve the stack.
 
 **Realm import is one-shot.** Keycloak reads the JSON only on the first boot of an
 empty database, so changing these on a running stack does nothing. To fix an
@@ -293,29 +303,29 @@ same thing, and it is the most likely reason a deploy appears not to reach a pho
 
 ## Notes and caveats
 
-- **Keycloak runs in `start-dev` mode** with a file-backed H2 database, inherited from
-  `deploy/docker/keycloak.Dockerfile`. Fine for evaluation. A production deployment
-  wants `start --optimized` against a real database, which is out of scope here.
-- **Do not mount a volume at `/opt/keycloak/data`.** It breaks Keycloak two ways, and
-  both failures are quiet, so this is worth stating plainly.
-  1. `keycloak.Dockerfile` bakes the realm to `/opt/keycloak/data/import/`. A volume
-     mounted at `/opt/keycloak/data` **shadows that directory**, so `--import-realm`
-     finds nothing. Keycloak boots fine, `/realms/master` answers 200, and only
-     `/realms/thunderbolt` 404s. There is no "Importing realm" line in the log, and
-     no error either.
-  2. Railway mounts volumes root-owned and the image runs non-root, so H2 dies with
-     `AccessDeniedException: /opt/keycloak/data/h2`, which needs `RAILWAY_RUN_UID=0`
-     to work around.
+- **Keycloak runs `start --optimized` against Postgres**, in its own `keycloak`
+  database on the in-project instance. `keycloak.Dockerfile` runs `kc.sh build` with
+  `KC_DB=postgres` in a builder stage so the provider is baked into the image, which
+  is what `--optimized` requires.
 
-  Persisting the dev-mode H2 file is not worth either problem: `--import-realm`
-  rebuilds the realm, the OIDC client, and the seeded user from
-  `deploy/config/keycloak-realm.json` on every boot.
+  This means the realm is **durable**: users, credential changes, and settings you
+  edit in the admin console survive a redeploy. That is the opposite of the
+  `start-dev` + H2 arrangement this path used previously, where the realm was rebuilt
+  from `deploy/config/keycloak-realm.json` on every boot.
 
-  The flip side, worth knowing before you edit a user by hand: with no volume the
-  H2 file lives in the container filesystem, so **users you create in the admin
-  console are lost on redeploy** and the realm returns to whatever
-  `KC_SEED_*` describes. Treat the realm JSON plus those variables as the source of
-  truth, not the console.
+  Two consequences follow from durability:
+  - **Realm import is one-shot.** Keycloak reads the JSON only when its database is
+    empty, so editing `KC_SEED_*` on a running stack does nothing. Change things in
+    the admin console, or drop the `keycloak` database to re-seed.
+  - **The Postgres volume now holds your identity provider**, not just sync data.
+    Back it up accordingly.
+
+- **Do not mount a volume at `/opt/keycloak/data`.** `keycloak.Dockerfile` bakes the
+  realm to `/opt/keycloak/data/import/`, and a volume mounted there **shadows that
+  directory**, so `--import-realm` finds nothing. The failure is quiet: Keycloak boots,
+  `/realms/master` answers 200, only `/realms/thunderbolt` 404s, and there is neither
+  an "Importing realm" line nor an error in the log. Keycloak needs no volume now that
+  its state lives in Postgres.
 
 - **`PGDATA` is a subdirectory** of the mount (`/var/lib/postgresql/data/pgdata`).
   Railway volumes mount with a `lost+found` entry and `initdb` refuses a non-empty

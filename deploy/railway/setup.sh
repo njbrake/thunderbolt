@@ -59,10 +59,27 @@ case "$DEPLOY_MODE" in
 esac
 
 # --- secrets -----------------------------------------------------------------
+# Mint a v4 UUID from openssl bytes rather than depending on uuidgen, which is
+# absent on stock Alpine and on some minimal CI images. Sets the version nibble
+# to 4 and the variant bits to 10xx per RFC 4122 §4.4.
+gen_uuid4() {
+  local h
+  h="$(openssl rand -hex 16)"
+  printf '%s-%s-4%s-%x%s-%s\n' \
+    "${h:0:8}" "${h:8:4}" "${h:13:3}" \
+    "$(((0x${h:16:1} & 0x3) | 0x8))" "${h:17:3}" "${h:20:12}"
+}
+
 # Hex-only, for two reasons: the values embed in postgres:// URIs without
 # percent-encoding, and `railway variable set K=V` splits on the first `=`, so
 # base64 padding is a hazard. POWERSYNC_JWT_SECRET must be >=32 chars, enforced
 # in backend/src/config/settings.ts.
+#
+# KC_SEED_ID lives here despite not being a secret, because it must be STABLE.
+# Keycloak stamps it into the token's `sub` claim, and Better Auth binds the
+# Thunderbolt account to that value, so minting a new one on a re-run would
+# orphan the existing account and its chats. Caching it alongside the secrets is
+# what makes re-runs safe.
 if [ -f "$SECRETS_FILE" ]; then
   log "reusing secrets from $SECRETS_FILE"
 else
@@ -76,10 +93,24 @@ BETTER_AUTH_SECRET=$(openssl rand -hex 32)
 POWERSYNC_JWT_SECRET=$(openssl rand -hex 24)
 KC_BOOTSTRAP_ADMIN_PASSWORD=$(openssl rand -hex 12)
 KC_SEED_PASSWORD=$(openssl rand -hex 16)
+KC_SEED_ID=$(gen_uuid4)
 EOF
 fi
 # shellcheck disable=SC1090
 . "$SECRETS_FILE"
+
+# Backfill keys added to this script after a stack was first provisioned, so an
+# existing secrets file does not silently leave them unset. Appending (rather
+# than regenerating the file) preserves every value the running stack already
+# persisted to its volumes.
+if [ -z "${KC_SEED_ID:-}" ]; then
+  KC_SEED_ID="$(gen_uuid4)"
+  log "adding KC_SEED_ID to $SECRETS_FILE"
+  # chmod, not umask: umask only applies to files being created, so appending to
+  # a secrets file that predates this script would leave its mode untouched.
+  chmod 600 "$SECRETS_FILE"
+  printf 'KC_SEED_ID=%s\n' "$KC_SEED_ID" >>"$SECRETS_FILE"
+fi
 
 # The realm's seeded user. Upstream's realm JSON ships demo@thunderbolt.io/demo;
 # these override it through Keycloak's ${VAR:default} substitution so a public
@@ -94,6 +125,26 @@ fi
 # in the admin console, or delete the keycloak volume to re-seed from scratch.
 KC_SEED_USERNAME="${KC_SEED_USERNAME:-owner}"
 KC_SEED_EMAIL="${KC_SEED_EMAIL:-owner@example.com}"
+# Overridden for the same reason: the realm defaults these to Demo/User, and they
+# are what the app renders as the signed-in user's name, so leaving them unset
+# shows "Demo User" in the sidebar even once the login itself is locked down.
+KC_SEED_FIRST_NAME="${KC_SEED_FIRST_NAME:-Thunderbolt}"
+KC_SEED_LAST_NAME="${KC_SEED_LAST_NAME:-Owner}"
+
+# An OpenAI-compatible inference gateway, and the key it authenticates with.
+# Optional: with both unset the backend serves only the shipped model lineup,
+# filtered to the providers it holds credentials for. Deliberately not generated
+# into SECRETS_FILE, since the key belongs to an external service and cannot be
+# invented; export it in the environment when running this script. Absent values
+# are skipped rather than written empty, so a re-run without them in the
+# environment leaves whatever the service already has in place.
+THUNDERBOLT_INFERENCE_URL="${THUNDERBOLT_INFERENCE_URL:-}"
+THUNDERBOLT_INFERENCE_API_KEY="${THUNDERBOLT_INFERENCE_API_KEY:-}"
+
+# Names the button on the sign-in page ("Sign in with Keycloak"). Baked into the
+# bundle at build time like the other VITE_* values below, so changing it needs a
+# rebuild. Defaults to the identity provider this path actually deploys.
+VITE_SSO_PROVIDER_NAME="${VITE_SSO_PROVIDER_NAME:-Keycloak}"
 
 # Which proxy header carries the real client IP. Rate limiting keys on it, so this
 # is not cosmetic: left empty behind a CDN, every request appears to come from a
@@ -211,12 +262,13 @@ ENVIRONMENT_ID="$(railway status --json 2>/dev/null | jq -r '.environments.edges
 
 ensure_volume "$(service_id "$SVC_PG")" /var/lib/postgresql/data "$SVC_PG"
 
-# Keycloak deliberately gets NO volume. Railway mounts volumes root-owned and the
-# Keycloak image runs non-root, so a mount at /opt/keycloak/data makes H2 fail on
-# boot with `AccessDeniedException: /opt/keycloak/data/h2` while the deployment
-# still reports SUCCESS and the domain serves 502. Persisting the dev-mode H2 file
-# buys little, since --import-realm rebuilds the realm, client and demo user on
-# every boot. A volume here would additionally need RAILWAY_RUN_UID=0.
+# Keycloak deliberately gets NO volume: its state lives in the `keycloak` database
+# on the Postgres above (KC_DB below), which the Postgres volume already persists.
+#
+# A volume here would also actively break the realm import, because
+# keycloak.Dockerfile bakes the realm to /opt/keycloak/data/import/ and a mount at
+# /opt/keycloak/data shadows that directory. The failure is silent: the deployment
+# reports SUCCESS, /realms/master answers 200, and only /realms/thunderbolt 404s.
 
 # --- domains ------------------------------------------------------------------
 # Generated before the URL-dependent variables below, because each service needs
@@ -274,8 +326,11 @@ setvar "$SVC_KC" \
   "KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true" \
   "KC_BOOTSTRAP_ADMIN_USERNAME=admin" \
   "KC_BOOTSTRAP_ADMIN_PASSWORD=$KC_BOOTSTRAP_ADMIN_PASSWORD" \
+  "KC_SEED_ID=$KC_SEED_ID" \
   "KC_SEED_USERNAME=$KC_SEED_USERNAME" \
   "KC_SEED_EMAIL=$KC_SEED_EMAIL" \
+  "KC_SEED_FIRST_NAME=$KC_SEED_FIRST_NAME" \
+  "KC_SEED_LAST_NAME=$KC_SEED_LAST_NAME" \
   "KC_SEED_PASSWORD=$KC_SEED_PASSWORD" \
   "OIDC_REDIRECT_URI=$API_URL/v1/api/auth/sso/callback/sso" \
   "OIDC_WEB_ORIGIN=$APP_URL" \
@@ -334,6 +389,19 @@ setvar "$SVC_BE" \
   "POWERSYNC_JWT_SECRET=$POWERSYNC_JWT_SECRET" \
   "POWERSYNC_JWT_KID=$PS_JWT_KID"
 
+# Set separately, and only when provided, so a run without them in the
+# environment does not overwrite a key the service already holds with an empty
+# string. An empty THUNDERBOLT_INFERENCE_URL reads as "no gateway", which would
+# silently retire every gateway model from the lineup.
+if [ -n "$THUNDERBOLT_INFERENCE_URL" ]; then
+  log "  attaching inference gateway"
+  setvar "$SVC_BE" "THUNDERBOLT_INFERENCE_URL=$THUNDERBOLT_INFERENCE_URL"
+  [ -n "$THUNDERBOLT_INFERENCE_API_KEY" ] &&
+    setvar "$SVC_BE" "THUNDERBOLT_INFERENCE_API_KEY=$THUNDERBOLT_INFERENCE_API_KEY"
+else
+  log "  no THUNDERBOLT_INFERENCE_URL in the environment; leaving the gateway variables untouched"
+fi
+
 # --- frontend -----------------------------------------------------------------
 # Railway exposes service variables to the Docker build as ARGs, and
 # frontend.Dockerfile already declares ARG VITE_THUNDERBOLT_CLOUD_URL /
@@ -345,7 +413,8 @@ log "configuring $SVC_FE"
 setvar "$SVC_FE" \
   "RAILWAY_DOCKERFILE_PATH=deploy/docker/frontend.Dockerfile" \
   "VITE_THUNDERBOLT_CLOUD_URL=$API_URL/v1" \
-  "VITE_AUTH_MODE=sso"
+  "VITE_AUTH_MODE=sso" \
+  "VITE_SSO_PROVIDER_NAME=$VITE_SSO_PROVIDER_NAME"
 
 # --- connect sources and deploy -----------------------------------------------
 # Connecting the repo is what triggers the first build, now that every variable
@@ -389,12 +458,17 @@ Stack provisioned.
 Sign in as:  $KC_SEED_EMAIL  (password is in $SECRETS_FILE, as KC_SEED_PASSWORD)
 Keycloak admin user: admin  (password is in $SECRETS_FILE)
 
-Self-registration is off, so this is the only account that can sign in. Add more
-from the Keycloak admin console.
+Self-registration is off, so this is the only account that can sign in. Keycloak
+runs on Postgres here, so accounts you add in the admin console are durable.
+
+Inference: $(if [ -n "$THUNDERBOLT_INFERENCE_URL" ]; then echo "gateway at $THUNDERBOLT_INFERENCE_URL"; else echo "no gateway set, so only shipped models with provider credentials are offered"; fi)
 
 $SECRETS_FILE holds every generated credential. It is gitignored. Keep it if you
 want re-runs to preserve the stack; delete it and the next run mints new secrets,
 which will not match what Postgres and Keycloak already persisted on their volumes.
+That file also holds KC_SEED_ID, which becomes the seeded user's OIDC subject claim
+and so the identity the Thunderbolt account is bound to. Losing it orphans that
+account.
 
 First boot takes several minutes: the frontend runs a full Vite build and
 Keycloak imports the realm.
