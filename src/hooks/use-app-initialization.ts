@@ -8,6 +8,8 @@ import type { HttpClient } from '@/contexts'
 import { getSettings, hasCurrentDefaultsVersions } from '@/dal'
 import { getAuthToken } from '@/lib/auth-token'
 import { Database, getCurrentDatabase, setDatabase } from '@/db/database'
+import { getPowerSyncInstance } from '@/db/powersync/sync-state'
+import { createSearchIndex } from '@/search/fts-setup'
 import type { AnyDrizzleDatabase, InitialSyncOutcome } from '@/db/database-interface'
 import { getLocalSetting } from '@/stores/local-settings-store'
 import { createHandleError } from '@/lib/error-utils'
@@ -18,6 +20,7 @@ import { beginInitRun, getInitTimingPayload, recordInitStep } from '@/lib/init-t
 import { pickModelsDefaults } from '@/lib/pick-defaults'
 import { getDatabasePath, getDatabaseType, getPlatform, isIndexedDbAvailable } from '@/lib/platform'
 import { initPosthog, trackError, trackEvent } from '@/lib/posthog'
+import { withTimeout } from '@/lib/timeout'
 import { runDataMigrations } from '@/lib/data-migrations'
 import { reconcileDefaults, versionMarkerKeys, type VersionMarkerKey } from '@/lib/reconcile-defaults'
 import { defaultSettingsVersion } from '@/defaults/settings'
@@ -96,37 +99,30 @@ const initializeDatabase = async (appDirPath: string): Promise<{ db: AnyDrizzleD
  */
 export const dbReadyTimeoutMs = 30_000
 
-export type DatabaseReadyOutcome = 'ready' | 'timed_out' | 'failed'
+export type DatabaseReadyResult =
+  | { outcome: 'ready' }
+  | { outcome: 'timed_out' }
+  | { outcome: 'failed'; error: unknown }
 
 /**
  * Resolve the database's first query with a bound, so a database that never
- * opens reports instead of hanging. Never rejects: the caller turns every
- * non-'ready' outcome into an error screen.
+ * opens reports instead of hanging. Never rejects: a query failure is returned
+ * as `{ outcome: 'failed', error }` so the caller can surface the original
+ * error (stack trace included) on the error screen and in tracking.
  */
 export const waitForDatabaseReady = async (
   db: Pick<AnyDrizzleDatabase, 'get'>,
   timeoutMs: number = dbReadyTimeoutMs,
-): Promise<DatabaseReadyOutcome> => {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<DatabaseReadyOutcome>((resolve) => {
-    timer = setTimeout(() => resolve('timed_out'), timeoutMs)
-  })
-  try {
-    return await Promise.race([
-      (async (): Promise<DatabaseReadyOutcome> => {
-        try {
-          await db.get(sql`select 1`)
-          return 'ready'
-        } catch (error) {
-          console.error('Database failed its first query:', error)
-          return 'failed'
-        }
-      })(),
-      timeout,
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
+): Promise<DatabaseReadyResult> => {
+  const firstQuery = (async (): Promise<DatabaseReadyResult> => {
+    try {
+      await db.get(sql`select 1`)
+      return { outcome: 'ready' }
+    } catch (error) {
+      return { outcome: 'failed', error }
+    }
+  })()
+  return (await withTimeout(firstQuery, timeoutMs, 'waitForDatabaseReady')) ?? { outcome: 'timed_out' }
 }
 
 type TrayInitResult = { tray: TrayIcon | undefined; window: Window | undefined }
@@ -250,16 +246,32 @@ const executeInitializationSteps = async (httpClient?: HttpClient): Promise<Hand
   // spinner forever, which looks identical to a slow network and hides the one
   // remedy that works — clearing the local database, which the error screen
   // offers. Reported as DATABASE_INIT_FAILED so the user gets that affordance.
-  const dbReadyOutcome = await time('step2b_db_ready', () => waitForDatabaseReady(db))
-  if (dbReadyOutcome !== 'ready') {
+  const dbReady = await time('step2b_db_ready', () => waitForDatabaseReady(db))
+  if (dbReady.outcome !== 'ready') {
+    console.error('Database did not become ready:', dbReady)
     const dbReadyError = createHandleError(
       'DATABASE_INIT_FAILED',
-      dbReadyOutcome === 'timed_out'
+      dbReady.outcome === 'timed_out'
         ? `Database did not become ready within ${dbReadyTimeoutMs / 1000}s`
         : 'Database failed its first query',
+      dbReady.outcome === 'failed' ? dbReady.error : undefined,
     )
-    trackError(dbReadyError, { initialization_step: 'db_ready', outcome: dbReadyOutcome })
+    trackError(dbReadyError, { initialization_step: 'db_ready', outcome: dbReady.outcome })
     return { success: false, error: dbReadyError }
+  }
+
+  // Step 2d: Build the unified full-text search index (THU-766). Idempotent —
+  // rebuilds only when missing or the schema version bumped. Runs against the
+  // raw SQLite handle, which only PowerSync exposes; other backends (e.g.
+  // bun-sqlite in tests) return null here and skip it. Non-critical: a failed
+  // build must never block boot, so it logs and continues.
+  const powerSyncInstance = getPowerSyncInstance()
+  if (powerSyncInstance) {
+    try {
+      await time('step2d_build_search_index', () => createSearchIndex(powerSyncInstance))
+    } catch (error) {
+      console.warn('[init] Failed to build search index:', error)
+    }
   }
 
   // Read the persisted `/config` cache once, up front. `pickModelsDefaults`

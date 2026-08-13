@@ -5,9 +5,23 @@
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { Elysia } from 'elysia'
 import { clearGatewayModelCache, ensureGatewayModels } from '@/inference/gateway-models'
+import { supportedModels } from '@/inference/routes'
 import { createTestSettings } from '@/test-utils/settings'
 import { defaultModels, defaultModelsVersion } from '@shared/defaults/models'
 import { createConfigRoutes } from './config'
+
+/**
+ * Resolve a bundled model by the provider it routes to, rather than naming one.
+ * The shipped lineup gets version-bumped (opus-4.8 became opus-5), and a
+ * hardcoded id turns that routine bump into an unrelated test failure.
+ */
+const bundledModelRoutedTo = (provider: string): string => {
+  const model = defaultModels.find((m) => supportedModels[m.model]?.provider === provider)
+  if (!model) {
+    throw new Error(`No bundled model routes to ${provider}; update this helper.`)
+  }
+  return model.model
+}
 
 const fetchConfig = async (settings: Parameters<typeof createConfigRoutes>[0]) => {
   const app = new Elysia().use(createConfigRoutes(settings))
@@ -95,11 +109,12 @@ describe('Config Routes', () => {
     })
 
     it('keeps a shipped model whose provider credential IS configured', async () => {
-      // opus-4.8 routes to Anthropic.
       const { body } = await fetchConfig(createTestSettings({ anthropicApiKey: 'sk-test' }))
       const ids = body.defaults.models.data.map((m: { model: string }) => m.model)
-      expect(ids).toContain('opus-4.8')
-      expect(ids).not.toContain('deepseek-v4-flash')
+      // Only the Anthropic credential is set, so the Anthropic-routed model
+      // survives and the Fireworks-routed one is filtered out.
+      expect(ids).toContain(bundledModelRoutedTo('anthropic'))
+      expect(ids).not.toContain(bundledModelRoutedTo('fireworks'))
     })
 
     // An unreachable gateway is transient; retiring every model on every client

@@ -3,12 +3,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from 'bun:test'
-import { defaultModelOpus48, defaultModels, defaultModelsVersion } from '@shared/defaults/models'
+import { defaultModelOpus5, defaultModels, defaultModelsVersion } from '@shared/defaults/models'
 import { pickModelsDefaults } from './pick-defaults'
 
 const serverPayload = (version: number) => ({
   version,
-  data: [{ ...defaultModelOpus48, name: `Server v${version}` }],
+  data: [{ ...defaultModelOpus5, name: `Server v${version}` }],
 })
 
 describe('pickModelsDefaults', () => {
@@ -79,8 +79,8 @@ describe('pickModelsDefaults', () => {
     const disjointPayload = {
       version: defaultModelsVersion + 5,
       data: [
-        { ...defaultModelOpus48, id: 'disjoint-id-1', model: 'kimi', name: 'Kimi' },
-        { ...defaultModelOpus48, id: 'disjoint-id-2', model: 'ds4', name: 'DS4' },
+        { ...defaultModelOpus5, id: 'disjoint-id-1', name: 'Fully Different Model 1' },
+        { ...defaultModelOpus5, id: 'disjoint-id-2', name: 'Fully Different Model 2' },
       ],
     }
     const picked = pickModelsDefaults(disjointPayload)
@@ -99,7 +99,7 @@ describe('pickModelsDefaults', () => {
     ]) {
       const picked = pickModelsDefaults({
         version: defaultModelsVersion + 5,
-        data: [defaultModelOpus48, bad as never],
+        data: [defaultModelOpus5, bad as never],
       })
       expect(picked.version).toBe(defaultModelsVersion)
       expect(picked.data).toBe(defaultModels)
@@ -113,8 +113,8 @@ describe('pickModelsDefaults', () => {
     const partialOverlap = {
       version: defaultModelsVersion + 1,
       data: [
-        defaultModelOpus48, // in bundle
-        { ...defaultModelOpus48, id: 'new-id', name: 'Server-only New Model' },
+        defaultModelOpus5, // in bundle
+        { ...defaultModelOpus5, id: 'new-id', name: 'Server-only New Model' },
       ],
     }
     const picked = pickModelsDefaults(partialOverlap)

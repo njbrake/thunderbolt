@@ -6,7 +6,6 @@ import type { InitialSyncOutcome } from '@/db/database-interface'
 import { setupTestDatabase, teardownTestDatabase } from '@/dal/test-utils'
 import { getInitTimingPayload, resetInitTiming } from '@/lib/init-timing'
 import { createMockHttpClient } from '@/test-utils/http-client'
-import { restoreIndexedDb, stubIndexedDb } from '@/test-utils/indexed-db'
 import { createTestProvider } from '@/test-utils/test-provider'
 import { getClock } from '@/testing-library'
 import { act, renderHook } from '@testing-library/react'
@@ -29,18 +28,35 @@ const mockPostHogConfig = {
 // happydom has no IndexedDB, so the boot pipeline's storage pre-flight
 // (isIndexedDbAvailable) would short-circuit to STORAGE_UNAVAILABLE. Stub a
 // working factory so the success path is exercised, mirroring a real browser.
-// `restoreIndexedDb` deletes the global again rather than setting it to
-// `undefined`, so later test files see the same absence they would have seen had
-// this file never run.
+const realIndexedDb = globalThis.indexedDB
+
+const stubWorkingIndexedDb = (): void => {
+  const factory = {
+    open: () => {
+      const request = {
+        onsuccess: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+        onupgradeneeded: null as (() => void) | null,
+        onblocked: null as (() => void) | null,
+        result: { close: () => {} },
+      }
+      queueMicrotask(() => request.onsuccess?.())
+      return request
+    },
+    deleteDatabase: () => ({}),
+  } as unknown as IDBFactory
+  Object.defineProperty(globalThis, 'indexedDB', { value: factory, configurable: true, writable: true })
+}
+
 describe('useAppInitialization', () => {
   beforeAll(async () => {
-    stubIndexedDb()
+    stubWorkingIndexedDb()
     await setupTestDatabase()
   })
 
   afterAll(async () => {
     await teardownTestDatabase()
-    restoreIndexedDb()
+    Object.defineProperty(globalThis, 'indexedDB', { value: realIndexedDb, configurable: true, writable: true })
   })
 
   it('provides correct hook interface', async () => {
@@ -211,17 +227,19 @@ describe('resolveInitialSyncStep', () => {
 describe('waitForDatabaseReady', () => {
   it('reports ready when the first query resolves', async () => {
     const db = { get: mock(async () => ({ 1: 1 })) }
-    expect(await waitForDatabaseReady(db as never, 1000)).toBe('ready')
+    expect(await waitForDatabaseReady(db as never, 1000)).toEqual({ outcome: 'ready' })
     expect(db.get).toHaveBeenCalledTimes(1)
   })
 
-  it('reports failed when the first query rejects, rather than propagating', async () => {
+  it('reports failed with the original error when the first query rejects, rather than propagating', async () => {
+    const queryError = new Error('no such vfs')
     const db = {
       get: mock(async () => {
-        throw new Error('no such vfs')
+        throw queryError
       }),
     }
-    expect(await waitForDatabaseReady(db as never, 1000)).toBe('failed')
+    const result = await waitForDatabaseReady(db as never, 1000)
+    expect(result).toEqual({ outcome: 'failed', error: queryError })
   })
 
   // The whole point: PowerSync opens storage lazily on this query, so a database
@@ -230,13 +248,13 @@ describe('waitForDatabaseReady', () => {
     const db = { get: mock(() => new Promise(() => {})) }
     const pending = waitForDatabaseReady(db as never, 20)
     await getClock().runAllAsync()
-    expect(await pending).toBe('timed_out')
+    expect(await pending).toEqual({ outcome: 'timed_out' })
   })
 
   it('does not time out a slow-but-successful open', async () => {
     const db = { get: mock(() => new Promise((resolve) => setTimeout(() => resolve({ 1: 1 }), 30))) }
     const pending = waitForDatabaseReady(db as never, 2000)
     await getClock().runAllAsync()
-    expect(await pending).toBe('ready')
+    expect(await pending).toEqual({ outcome: 'ready' })
   })
 })
