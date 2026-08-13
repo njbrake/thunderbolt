@@ -81,6 +81,15 @@ describe('analytics sanitizeUrl', () => {
     expect(sanitizeUrl('/settings')).toBe('/settings')
     expect(sanitizeUrl('https://app.test/settings?tab=account')).toBe('https://app.test/settings?tab=account')
   })
+
+  it('drops the query on /auth-error so provider error text never reaches analytics', () => {
+    // error_description is attacker- or IdP-supplied free text.
+    expect(sanitizeUrl('https://app.test/auth-error?error=x&error_description=Client+not+registered')).toBe(
+      'https://app.test/auth-error',
+    )
+    expect(sanitizeUrl('/auth-error?error=state_mismatch')).toBe('/auth-error')
+    expect(sanitizeUrl('/auth-error')).toBe('/auth-error')
+  })
 })
 
 describe('analytics before_send sanitization', () => {

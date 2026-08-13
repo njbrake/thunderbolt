@@ -8,6 +8,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { PowerSyncContext } from '@powersync/react'
 
 import ChatDetailPage from '@/chats/detail'
+import AuthError from '@/components/auth-error'
 import MagicLinkVerify from '@/components/magic-link-verify'
 import OAuthCallback from '@/components/oauth-callback'
 import { AccountDeleted } from '@/components/account-deleted'
@@ -223,6 +224,12 @@ const AppRoutes = ({ initData }: { initData: InitData }) => {
 
         {/* SSO redirect route — no guard, only in OIDC/SAML mode */}
         {ssoMode && <Route path="/sign-in" element={<SsoSignIn />} />}
+
+        {/* Terminal landing page for auth failures, targeted by Better Auth's
+            onAPIError.errorURL. Unguarded in every auth mode: putting it behind
+            the gate would bounce a failed SSO login back to the identity
+            provider and loop. */}
+        <Route path="/auth-error" element={<AuthError />} />
 
         {/* Waitlist routes - unauthenticated only (skip when bypass or SSO mode) */}
         {!ssoMode && !shouldBypassWaitlist && (

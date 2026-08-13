@@ -174,6 +174,14 @@ Tested with BetterStack, Jaeger, Zipkin, New Relic, Grafana Cloud, and any OTLP-
 | `SWAGGER_ENABLED`  | `false`                 | Expose `/v1/swagger` with the full OpenAPI spec (don't in production) |
 | `MONITORING_TOKEN` | —                       | Shared secret for authenticated `/health` checks                     |
 
+### Serving the app and API on separate hostnames
+
+The simplest deployments put the frontend and the backend behind one origin (Compose, the ALB, a k8s ingress). If you split them, `APP_URL` and `BETTER_AUTH_URL` must stay **same-site**: two hostnames under one registrable domain, such as `app.example.com` and `api.example.com`. Different ports or subdomains of a shared parent are fine.
+
+Hostnames on different registrable domains break sign-in. The auth cookies are `SameSite=Lax`, so a cross-site deployment loses both the OAuth `state` cookie (after a successful IdP login the callback redirects to `APP_URL/auth-error?error=state_mismatch`, and the backend logs `state_security_mismatch`) and the session cookie (`/get-session` returns 401 from the app origin). Watch out for PaaS hostnames that look like subdomains but are not: `up.railway.app`, `vercel.app`, and similar are on the [Public Suffix List](https://publicsuffix.org/list/), which makes `web.up.railway.app` and `api.up.railway.app` cross-site. Attach custom domains under one apex instead.
+
+Failed sign-ins redirect to `APP_URL/auth-error`, which shows the provider's error code and a retry button.
+
 ## Frontend Build Args
 
 The web/desktop bundle accepts two Vite env vars, passed as Dockerfile build args in `deploy/docker/frontend.Dockerfile`:
