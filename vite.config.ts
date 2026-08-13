@@ -7,6 +7,7 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
+import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'path'
 import { defineConfig } from 'vite'
@@ -28,6 +29,54 @@ const shouldAnalyze = process.env.ANALYZE?.toLowerCase() === 'true' || process.a
 // Source maps are disabled by default so forks don't accidentally expose proprietary code.
 // Enable with ENABLE_SOURCEMAP=true (e.g. in CI) to upload maps to PostHog for error tracking.
 const sourcemap = process.env.ENABLE_SOURCEMAP?.toLowerCase() === 'true' ? 'hidden' : false
+
+// Set from `configResolved` on `copy-powersync-assets`, which needs to know whether
+// it is serving or building before its `buildStart` runs. `apply: 'build'` can't be
+// used for this: it would switch off the asset copy itself, which dev needs too.
+let powersyncAssetsAreForBuild = false
+
+/**
+ * Delete the files `powersync-web copy-assets` leaves in `public/@powersync` that
+ * nothing ever requests. It copies @powersync/web's whole `dist`, and Vite copies
+ * `public/` into the build verbatim, so anything it writes otherwise ships:
+ *
+ * - `index.umd.js` (772KB), the script-tag build of the entire SDK. Unreferenced:
+ *   this app imports @powersync/web as source through the `powersync-web-internal`
+ *   alias below, and the two UMD *workers* it does load by URL are self-contained.
+ * - the vendor `.map` files (2.8MB), sourcemaps for code we did not write. The
+ *   Docker build and CI both already `find dist -name '*.map' -delete`, so this
+ *   only makes a plain `vite build` produce what actually gets deployed.
+ *
+ * The four `.wasm` blobs stay. They are byte-identical to the ones the bundler
+ * emits under `assets/`, but both sets are live — see `copy-powersync-assets`.
+ *
+ * Build only, so `bun run dev` keeps the maps for stepping through PowerSync's
+ * worker. A map's `sourceMappingURL` comment goes when the map does, so devtools
+ * doesn't report a missing file that was removed on purpose.
+ */
+const prunePowerSyncPublicAssets = (dir: string): number => {
+  if (!fs.existsSync(dir)) {
+    return 0
+  }
+  let freedBytes = 0
+  for (const entry of fs.readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+    const file = path.join(dir, entry)
+    if (!fs.statSync(file).isFile()) {
+      continue
+    }
+    if (entry.endsWith('.map') || path.basename(entry) === 'index.umd.js') {
+      freedBytes += fs.statSync(file).size
+      fs.rmSync(file)
+    } else if (entry.endsWith('.js')) {
+      const source = fs.readFileSync(file, 'utf8')
+      const stripped = source.replace(/\n*\/\/# sourceMappingURL=.*\s*$/, '\n')
+      if (stripped !== source) {
+        fs.writeFileSync(file, stripped)
+      }
+    }
+  }
+  return freedBytes
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -59,10 +108,37 @@ export default defineConfig({
     },
   },
   plugins: [
+    // Publishes @powersync/web's prebuilt UMD workers at `/@powersync/worker/*`,
+    // which the safari-tauri database config loads by absolute URL (see
+    // `getPowerSyncOptions` in src/db/powersync/database.ts).
+    //
+    // This is why the same four wa-sqlite `.wasm` blobs appear twice in `dist`,
+    // once here and once under `assets/` with a bundler hash. It is not waste, and
+    // deleting either set breaks a platform:
+    //
+    //   - `assets/`: the default config (Chrome/Edge/Firefox web) passes no worker,
+    //     so PowerSync instantiates its own via `new URL(..., import.meta.url)`.
+    //     The bundler follows that and emits the wasm it imports.
+    //   - `@powersync/`: Safari web and every Tauri build pass the UMD worker paths
+    //     instead, because `import.meta.url` does not resolve under `tauri://` and
+    //     Safari needs OPFSCoopSyncVFS. Those workers resolve their wasm relative
+    //     to themselves, so they need this copy.
+    //
+    // A web deployment serves both because it can't know the visitor's browser.
+    // Collapsing to one set means putting every browser on the UMD workers, which
+    // also gives up the default config's multi-tab SharedWorker; that is a platform
+    // decision, not a build cleanup.
     {
       name: 'copy-powersync-assets',
+      configResolved(config) {
+        powersyncAssetsAreForBuild = config.command === 'build'
+      },
       buildStart() {
         execSync('powersync-web copy-assets --output public', { stdio: 'inherit' })
+        if (powersyncAssetsAreForBuild) {
+          const freedBytes = prunePowerSyncPublicAssets(path.resolve(dirname, 'public/@powersync'))
+          console.info(`copy-powersync-assets: pruned ${(freedBytes / 1024 ** 2).toFixed(1)}MB of unrequested assets`)
+        }
       },
     },
     tailwindcss(),
@@ -109,11 +185,12 @@ export default defineConfig({
       workbox: {
         // Precache the app SHELL ONLY — deliberately not `**/*`.
         //
-        // `dist` is ~36MB: 17MB of that is wa-sqlite / ACP wasm (each blob
-        // emitted twice, once under `assets/` and once under `@powersync/`), plus
-        // multi-MB lazy route chunks like agent-core, maplibre and pdf.worker. A
-        // `**/*` glob precaches 263 entries / 31MB, which every install would
-        // download up front over cellular before the app was usable.
+        // `dist` is ~31MB, and 17MB of that is wasm: 7.3MB of wa-sqlite blobs
+        // shipped twice, because the bundled and the UMD worker paths each need
+        // their own copy, plus 2.5MB for the ACP client. Several MB more is lazy
+        // route chunks like agent-core, maplibre and pdf.worker. A `**/*` glob
+        // precaches 288 entries and 31MB, which every install would download up
+        // front over cellular before the app was usable.
         //
         // The shell is ~2.3MB and is all that is needed to boot and to make the
         // app installable. Lazy chunks and wasm stay on the network, where
