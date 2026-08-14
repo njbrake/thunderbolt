@@ -22,6 +22,7 @@ describe('normalizeSearchHits', () => {
       {
         title: 'ok.example',
         pageUrl: 'https://ok.example/page',
+        snippet: null,
         faviconUrl: 'https://ok.example/favicon.ico',
         previewImageUrl: null,
       },
@@ -48,5 +49,31 @@ describe('normalizeSearchHits', () => {
     const [result] = normalizeSearchHits([{ url: 'https://example.com/p', previewImageUrl: 'javascript:alert(1)' }])
     expect(result.pageUrl).toBe('https://example.com/p')
     expect(result.previewImageUrl).toBeNull()
+  })
+})
+
+describe('normalizeSearchHits snippet handling', () => {
+  it('passes a normal snippet through, trimmed', () => {
+    expect(normalizeSearchHits([{ url: 'https://e.com/p', snippet: '  a summary  ' }])[0].snippet).toBe('a summary')
+  })
+
+  it('nulls an absent or blank snippet rather than emitting an empty string', () => {
+    expect(normalizeSearchHits([{ url: 'https://e.com/p' }])[0].snippet).toBeNull()
+    expect(normalizeSearchHits([{ url: 'https://e.com/p', snippet: '   ' }])[0].snippet).toBeNull()
+  })
+
+  // Some backends return the whole extracted page in this field, otari's
+  // `/v1/search` among them, so ten results could otherwise dump hundreds of KB
+  // into the model's context in a single tool call.
+  it('caps a snippet that is really a whole page', () => {
+    const [result] = normalizeSearchHits([{ url: 'https://e.com/p', snippet: 'A'.repeat(50_000) }])
+    expect(result.snippet).toHaveLength(1_001) // 1000 chars plus the ellipsis
+    expect(result.snippet?.endsWith('…')).toBe(true)
+  })
+
+  it('leaves a snippet at the cap unmarked', () => {
+    expect(normalizeSearchHits([{ url: 'https://e.com/p', snippet: 'A'.repeat(1_000) }])[0].snippet).toBe(
+      'A'.repeat(1_000),
+    )
   })
 })

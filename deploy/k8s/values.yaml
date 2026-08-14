@@ -76,6 +76,9 @@ backend:
     mistralApiKeyBase64: ""
     thunderboltInferenceApiKeyBase64: ""
     exaApiKeyBase64: ""
+    # Only needed when WEB_SEARCH_PROVIDER names an HTTP adapter whose backend
+    # requires auth. A self-hosted SearXNG typically does not.
+    webSearchApiKeyBase64: ""
   # -- Pod annotations applied to backend pods. Merged with top-level
   # `podAnnotations`; these win on key conflict.
   podAnnotations: {}

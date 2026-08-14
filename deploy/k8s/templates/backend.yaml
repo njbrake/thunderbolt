@@ -138,6 +138,22 @@ spec:
                 secretKeyRef:
                   name: thunderbolt-secrets
                   key: exa-api-key
+            # Which adapter serves each web capability, and where the HTTP search
+            # adapters point. All empty by default, which leaves Exa inferred from
+            # EXA_API_KEY exactly as before these existed.
+            - name: WEB_SEARCH_PROVIDER
+              value: {{ .Values.backend.env.webSearchProvider | default "" | quote }}
+            - name: WEB_FETCH_PROVIDER
+              value: {{ .Values.backend.env.webFetchProvider | default "" | quote }}
+            - name: WEB_SEARCH_URL
+              value: {{ .Values.backend.env.webSearchUrl | default "" | quote }}
+            - name: WEB_SEARCH_TOOL_NAME
+              value: {{ .Values.backend.env.webSearchToolName | default "" | quote }}
+            - name: WEB_SEARCH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: thunderbolt-secrets
+                  key: web-search-api-key
           {{- include "thunderbolt.resources" .Values.backend.resources | nindent 10 }}
           readinessProbe:
             httpGet:

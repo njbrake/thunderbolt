@@ -38,10 +38,22 @@ export const createSearchRoutes = (auth: Auth, rateLimit?: AnyElysia, deps: Sear
           }
 
           const limit = query.limit ? Math.min(Math.max(query.limit, 1), 25) : 10
-          // Normalization stays here rather than in the provider so every adapter
-          // gets the same HTTPS enforcement, favicon derivation, and title
-          // fallback.
-          return { results: normalizeSearchHits(await provider.search(query.q, { limit })) }
+          try {
+            // Normalization stays here rather than in the provider so every adapter
+            // gets the same HTTPS enforcement, favicon derivation, and title
+            // fallback.
+            return { results: normalizeSearchHits(await provider.search(query.q, { limit })) }
+          } catch (error) {
+            // An upstream that is down, slow, or answering with something other than
+            // the shape it claims. 502 rather than letting `safeErrorHandler` turn it
+            // into a bare 500: this says the configured backend failed rather than
+            // that the app did, which is the difference between an operator checking
+            // their search backend and reading Thunderbolt's logs. The upstream's own
+            // message is logged, never returned, since nothing has validated it.
+            console.error('[search] provider failed:', error)
+            set.status = 502
+            return { error: 'Search backend failed' }
+          }
         },
         {
           query: t.Object({

@@ -44,12 +44,15 @@ export type LinkPreviewParams = z.infer<typeof linkPreviewSchema>
 
 /**
  * Data type for search results returned by the universal search API. Shape
- * matches `GET /v1/search` — only the four fields that the app actually
- * renders, all HTTPS-only.
+ * matches `GET /v1/search` — only the fields the app actually renders or hands to
+ * the model, with every URL HTTPS-only.
  */
 export type SearchResultData = {
   title: string
   pageUrl: string
+  /** Result text the model answers from, capped server-side. `null` from a search
+   *  provider that returns none, leaving the model to fetch the page to read it. */
+  snippet: string | null
   faviconUrl: string | null
   previewImageUrl: string | null
   /** Optional source index assigned client-side when results are merged into a chat. */

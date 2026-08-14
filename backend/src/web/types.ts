@@ -22,6 +22,11 @@
 export type WebSearchHit = {
   url: string
   title?: string | null
+  /**
+   * Text the provider returned for the result, if any. Length is the provider's
+   * choice and some return a whole page here, so normalization caps it.
+   */
+  snippet?: string | null
   /** The provider's own favicon, if it supplies one. Derived from the URL when not. */
   faviconUrl?: string | null
   previewImageUrl?: string | null
@@ -31,6 +36,12 @@ export type WebSearchHit = {
 export type SearchResultDto = {
   title: string
   pageUrl: string
+  /**
+   * Result text for the model to answer from, capped by normalization. `null` from
+   * a provider that returns none, in which case the model has titles and URLs and
+   * has to fetch a page to read anything.
+   */
+  snippet: string | null
   faviconUrl: string | null
   previewImageUrl: string | null
 }

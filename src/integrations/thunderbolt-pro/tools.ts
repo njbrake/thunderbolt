@@ -65,7 +65,7 @@ export const createConfigs = (
             index: sourceIndex,
             url: result.pageUrl,
             title: result.title,
-            description: undefined,
+            description: result.snippet ?? undefined,
             image: result.previewImageUrl,
             favicon: result.faviconUrl,
             siteName: deriveSiteName(result.pageUrl),

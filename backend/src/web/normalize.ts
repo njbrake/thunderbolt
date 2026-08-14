@@ -28,9 +28,30 @@ export const normalizeSearchHits = (hits: readonly WebSearchHit[]): SearchResult
       // title rather than folding an unrelated change into the provider split.
       title: hit.title ?? new URL(pageUrl).hostname,
       pageUrl,
+      snippet: capSnippet(hit.snippet),
       faviconUrl: ensureHttps(hit.faviconUrl ?? null) ?? deriveFaviconUrl(pageUrl),
       previewImageUrl: ensureHttps(hit.previewImageUrl ?? null),
     })
   }
   return results
+}
+
+/**
+ * Per-result text budget.
+ *
+ * A snippet is not always a snippet: some backends return the whole extracted page
+ * in that field (otari's `/v1/search` does whenever contents are requested), so a
+ * ten-result search could otherwise put hundreds of KB into the model's context in
+ * one tool call. Capping here rather than in each adapter means a provider added
+ * later cannot forget to, and the model still has `fetch_content` when it needs a
+ * full page.
+ */
+const snippetMaxChars = 1_000
+
+const capSnippet = (snippet: string | null | undefined): string | null => {
+  const trimmed = snippet?.trim()
+  if (!trimmed) {
+    return null
+  }
+  return trimmed.length > snippetMaxChars ? `${trimmed.slice(0, snippetMaxChars).trimEnd()}…` : trimmed
 }

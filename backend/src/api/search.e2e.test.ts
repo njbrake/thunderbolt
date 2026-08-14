@@ -76,3 +76,51 @@ describe('GET /v1/search — e2e', () => {
     expect(res.status).toBe(401)
   })
 })
+
+describe('GET /v1/search — backend failures', () => {
+  let failHandle: TestAppHandle
+
+  afterEach(async () => {
+    if (failHandle) {
+      await failHandle.cleanup()
+    }
+  })
+
+  // An unreachable or misbehaving upstream is the operator's problem to find, and a
+  // bare 500 from `safeErrorHandler` says "Thunderbolt broke" instead of "your
+  // configured search backend did".
+  it('answers 502 when the provider throws, without leaking the upstream message', async () => {
+    failHandle = await createTestApp({
+      searchProvider: {
+        id: 'stub',
+        search: async () => {
+          throw new Error('connect ECONNREFUSED 10.0.0.5:8080')
+        },
+      },
+    })
+    const res = await failHandle.app.handle(
+      new Request('http://localhost/v1/search?q=hello', {
+        method: 'GET',
+        headers: authHeaders(failHandle.bearerToken),
+      }),
+    )
+
+    expect(res.status).toBe(502)
+    const body = await res.text()
+    expect(body).toContain('Search backend failed')
+    expect(body).not.toContain('10.0.0.5')
+  })
+
+  it('answers 503 when no provider is configured at all', async () => {
+    failHandle = await createTestApp({ searchProvider: null })
+    const res = await failHandle.app.handle(
+      new Request('http://localhost/v1/search?q=hello', {
+        method: 'GET',
+        headers: authHeaders(failHandle.bearerToken),
+      }),
+    )
+
+    expect(res.status).toBe(503)
+    expect(await res.text()).toContain('not configured')
+  })
+})

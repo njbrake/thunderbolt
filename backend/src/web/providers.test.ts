@@ -65,3 +65,53 @@ describe('web provider resolution', () => {
     })
   })
 })
+
+describe('HTTP search adapter selection', () => {
+  it('selects the perplexity-compatible adapter by name and URL', () => {
+    const settings = createTestSettings({
+      webSearchProvider: 'perplexity-compatible',
+      webSearchUrl: 'https://gateway.example/v1',
+    })
+    expect(resolveWebSearchProvider(settings, noClient)?.id).toBe('perplexity-compatible')
+    expect(getWebCapabilities(settings).webSearchEnabled).toBe(true)
+  })
+
+  it('selects the searxng adapter by name and URL', () => {
+    const settings = createTestSettings({ webSearchProvider: 'searxng', webSearchUrl: 'http://searxng:8080' })
+    expect(resolveWebSearchProvider(settings, noClient)?.id).toBe('searxng')
+    expect(getWebCapabilities(settings).webSearchEnabled).toBe(true)
+  })
+
+  it('needs no API key, since a self-hosted backend may be unauthenticated', () => {
+    const settings = createTestSettings({ webSearchProvider: 'searxng', webSearchUrl: 'http://searxng:8080' })
+    expect(getWebCapabilities(settings).webSearchEnabled).toBe(true)
+  })
+
+  it('resolves nothing when the adapter is named without a URL', () => {
+    const settings = createTestSettings({ webSearchProvider: 'searxng', webSearchUrl: '' })
+    expect(resolveWebSearchProvider(settings, noClient)).toBeNull()
+    expect(getWebCapabilities(settings).webSearchEnabled).toBe(false)
+  })
+
+  // A URL alone does not say which shape the backend speaks, and guessing would send
+  // a SearXNG query to a Perplexity-shaped endpoint. Only Exa is inferred.
+  it('does not infer an HTTP adapter from a URL alone', () => {
+    const settings = createTestSettings({ webSearchUrl: 'http://searxng:8080' })
+    expect(resolveWebSearchProvider(settings, noClient)).toBeNull()
+    expect(getWebCapabilities(settings).webSearchEnabled).toBe(false)
+  })
+
+  // Search can come from a gateway while page fetch stays with Exa. This is the
+  // configuration that points search at otari without giving up fetch_content.
+  it('supports search on a gateway and fetch on Exa at the same time', () => {
+    const settings = createTestSettings({
+      webSearchProvider: 'perplexity-compatible',
+      webSearchUrl: 'https://gateway.example/v1',
+      webFetchProvider: 'exa',
+      exaApiKey: 'key',
+    })
+    expect(resolveWebSearchProvider(settings, noClient)?.id).toBe('perplexity-compatible')
+    expect(resolveWebFetchProvider(settings, stubExaClient as never)?.id).toBe('exa')
+    expect(getWebCapabilities(settings)).toEqual({ webSearchEnabled: true, webFetchEnabled: true })
+  })
+})

@@ -11,6 +11,12 @@ import {
   type ExaContentsClient,
   type ExaSearchClient,
 } from './exa'
+import {
+  createPerplexityCompatibleSearchProvider,
+  createSearxngSearchProvider,
+  perplexityCompatibleProviderId,
+  searxngProviderId,
+} from './http-search'
 import type { WebFetchProvider, WebSearchProvider } from './types'
 
 /**
@@ -28,9 +34,24 @@ import type { WebFetchProvider, WebSearchProvider } from './types'
  * boot-time error naming the field rather than a silent no-op.
  */
 
-type ProviderSettings = Pick<Settings, 'webSearchProvider' | 'webFetchProvider' | 'exaApiKey'>
+type ProviderSettings = Pick<
+  Settings,
+  'webSearchProvider' | 'webFetchProvider' | 'exaApiKey' | 'webSearchUrl' | 'webSearchApiKey' | 'webSearchToolName'
+>
 
-/** Empty means "infer from whichever credential is present". */
+const httpSearchConfig = (settings: ProviderSettings) => ({
+  baseUrl: settings.webSearchUrl,
+  apiKey: settings.webSearchApiKey || undefined,
+  toolName: settings.webSearchToolName || undefined,
+})
+
+/**
+ * Empty means "infer from whichever credential is present".
+ *
+ * Only Exa is inferred. The HTTP adapters are not, because `WEB_SEARCH_URL` alone
+ * does not say which shape the backend speaks, and guessing would send a SearXNG
+ * query to a Perplexity-shaped endpoint. Those are opt-in by name.
+ */
 const selectedProvider = (configured: string, settings: ProviderSettings): string =>
   configured || (settings.exaApiKey ? exaProviderId : '')
 
@@ -48,6 +69,10 @@ export const resolveWebSearchProvider = (
       const client = exaClientFactory()
       return client ? createExaSearchProvider(client) : null
     }
+    case perplexityCompatibleProviderId:
+      return settings.webSearchUrl ? createPerplexityCompatibleSearchProvider(httpSearchConfig(settings)) : null
+    case searxngProviderId:
+      return settings.webSearchUrl ? createSearxngSearchProvider(httpSearchConfig(settings)) : null
     default:
       return null
   }
@@ -88,6 +113,12 @@ const providerIsUsable = (providerId: string, settings: ProviderSettings): boole
   switch (providerId) {
     case exaProviderId:
       return !!settings.exaApiKey
+    case perplexityCompatibleProviderId:
+    case searxngProviderId:
+      // A URL is the whole requirement: both shapes are reachable unauthenticated
+      // (a self-hosted SearXNG, an otari on a private network), so an API key is
+      // optional and its absence is not a misconfiguration.
+      return !!settings.webSearchUrl
     default:
       return false
   }

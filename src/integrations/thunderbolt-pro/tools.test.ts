@@ -42,6 +42,7 @@ describe('Thunderbolt Pro Tools', () => {
           {
             title: 'AI Article',
             pageUrl: 'https://example.com/ai',
+            snippet: 'A short summary of the article.',
             faviconUrl: 'https://example.com/favicon.ico',
             previewImageUrl: 'https://example.com/image.jpg',
           },
@@ -151,12 +152,14 @@ describe('createConfigs source collector', () => {
     {
       title: 'Article A',
       pageUrl: 'https://a.com/article',
+      snippet: 'Summary of A.',
       faviconUrl: 'https://a.com/favicon.ico',
       previewImageUrl: 'https://a.com/image.jpg',
     },
     {
       title: 'Article B',
       pageUrl: 'https://b.com/article',
+      snippet: null,
       faviconUrl: null,
       previewImageUrl: null,
     },
@@ -191,6 +194,25 @@ describe('createConfigs source collector', () => {
     expect(sourceCollector[1].url).toBe('https://b.com/article')
   })
 
+  // The search tool used to record `description: undefined` because the route
+  // returned no result text at all, while the system prompt told the model to
+  // "answer from its snippets". Both halves are wired now.
+  it('records the result snippet as the source description and hands it to the model', async () => {
+    searchSpy.mockResolvedValue([mockSearchResults[0], mockSearchResults[1]])
+    const sourceCollector: SourceMetadata[] = []
+    const configs = createConfigs(dummyHttpClient, sourceCollector)
+
+    const results = (await getSearchTool(configs).execute({ query: 'test', max_results: 10 })) as Array<{
+      snippet: string | null
+    }>
+
+    expect(sourceCollector[0].description).toBe('Summary of A.')
+    expect(results[0].snippet).toBe('Summary of A.')
+    // A provider that returns no text leaves it absent rather than empty.
+    expect(sourceCollector[1].description).toBeUndefined()
+    expect(results[1].snippet).toBeNull()
+  })
+
   it('deduplicates sources by URL', async () => {
     searchSpy.mockResolvedValue([mockSearchResults[0], mockSearchResults[0]])
     const sourceCollector: SourceMetadata[] = []
@@ -219,6 +241,7 @@ describe('createConfigs source collector', () => {
     const bulkResults: SearchResultData[] = Array.from({ length: 10 }, (_, i) => ({
       title: `Site ${i}`,
       pageUrl: `https://site-${i}.com`,
+      snippet: null,
       faviconUrl: null,
       previewImageUrl: null,
     }))

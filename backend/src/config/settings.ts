@@ -27,8 +27,15 @@ const settingsSchema = z
     // not resolve to "no web access" and look like a missing credential.
     // Search and fetch are separate settings because they are separate
     // capabilities; one provider can serve search and another page fetch.
-    webSearchProvider: z.enum(['', 'exa']).default(''),
+    webSearchProvider: z.enum(['', 'exa', 'perplexity-compatible', 'searxng']).default(''),
     webFetchProvider: z.enum(['', 'exa']).default(''),
+    // Where the HTTP search adapters point. Base URL only: each adapter appends its
+    // own path, so give `https://gateway.example/v1` and not `.../v1/search`.
+    // `webSearchToolName` names one tool on a backend hosting several (otari's
+    // `/v1/search/<tool>`); leave it empty for a backend with a single endpoint.
+    webSearchUrl: z.string().default(''),
+    webSearchApiKey: z.string().default(''),
+    webSearchToolName: z.string().default(''),
     tinfoilApiKey: z.string().default(''),
     // Include the `/v1` API prefix — Tinfoil's OpenAI-compatible endpoints live
     // under `/v1/chat/completions`, `/v1/models`, etc.
@@ -199,6 +206,9 @@ const parseSettings = (): Settings => {
     exaApiKey: process.env.EXA_API_KEY || '',
     webSearchProvider: process.env.WEB_SEARCH_PROVIDER || '',
     webFetchProvider: process.env.WEB_FETCH_PROVIDER || '',
+    webSearchUrl: process.env.WEB_SEARCH_URL || '',
+    webSearchApiKey: process.env.WEB_SEARCH_API_KEY || '',
+    webSearchToolName: process.env.WEB_SEARCH_TOOL_NAME || '',
     tinfoilApiKey: process.env.TINFOIL_API_KEY || '',
     tinfoilEnclaveUrl: process.env.TINFOIL_ENCLAVE_URL || 'https://inference.tinfoil.sh/v1',
     thunderboltInferenceUrl: process.env.THUNDERBOLT_INFERENCE_URL || '',
