@@ -20,6 +20,15 @@ const settingsSchema = z
     mistralApiKey: z.string().default(''),
     anthropicApiKey: z.string().default(''),
     exaApiKey: z.string().default(''),
+    // Which adapter serves each web capability. Empty means "infer", which picks
+    // Exa when EXA_API_KEY is set and otherwise leaves the capability off, so a
+    // deployment that sets neither behaves as it did before these existed. An
+    // enum rather than a free string: a typo should fail at boot naming the field,
+    // not resolve to "no web access" and look like a missing credential.
+    // Search and fetch are separate settings because they are separate
+    // capabilities; one provider can serve search and another page fetch.
+    webSearchProvider: z.enum(['', 'exa']).default(''),
+    webFetchProvider: z.enum(['', 'exa']).default(''),
     tinfoilApiKey: z.string().default(''),
     // Include the `/v1` API prefix — Tinfoil's OpenAI-compatible endpoints live
     // under `/v1/chat/completions`, `/v1/models`, etc.
@@ -188,6 +197,8 @@ const parseSettings = (): Settings => {
     mistralApiKey: process.env.MISTRAL_API_KEY || '',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     exaApiKey: process.env.EXA_API_KEY || '',
+    webSearchProvider: process.env.WEB_SEARCH_PROVIDER || '',
+    webFetchProvider: process.env.WEB_FETCH_PROVIDER || '',
     tinfoilApiKey: process.env.TINFOIL_API_KEY || '',
     tinfoilEnclaveUrl: process.env.TINFOIL_ENCLAVE_URL || 'https://inference.tinfoil.sh/v1',
     thunderboltInferenceUrl: process.env.THUNDERBOLT_INFERENCE_URL || '',

@@ -6,7 +6,7 @@ import type { Auth } from '@/auth/elysia-plugin'
 import { createAuthMacro } from '@/auth/elysia-plugin'
 import { safeErrorHandler } from '@/middleware/error-handling'
 import { Elysia, type AnyElysia } from 'elysia'
-import { exaPlugin } from './exa'
+import { fetchContentPlugin } from './fetch-content'
 
 /**
  * Create pro tools routes
@@ -19,6 +19,6 @@ export const createProToolsRoutes = (auth: Auth, rateLimit?: AnyElysia) => {
       guardedApp.use(rateLimit)
     }
 
-    return guardedApp.use(exaPlugin)
+    return guardedApp.use(fetchContentPlugin)
   })
 }

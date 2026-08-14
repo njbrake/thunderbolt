@@ -141,7 +141,7 @@ const logVerbosePrompt = async (scenario: EvalScenario, skillToken: string) => {
       currency: settings.currency,
     },
     integrationStatus: 'READY',
-    hasWebTools: true,
+    webTools: { search: true, fetchContent: true },
   })
 
   console.log(`\n${cyan}--- SYSTEM PROMPT (${scenario.id}) ---${reset}`)

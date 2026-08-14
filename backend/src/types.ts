@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import type { SearchExaClient } from '@/api/search'
+import type { WebSearchProvider } from '@/web/types'
 import type { Auth } from '@/auth/auth'
 import type { db } from '@/db/client'
 import type { ObservabilityRecorder } from '@/proxy/observability'
@@ -32,8 +32,10 @@ export type AppDeps = {
    *  validation. Tests inject a deterministic resolver to avoid `mock.module`
    *  on `node:dns` (which leaks across files). Default: `dns.promises.lookup`. */
   dnsLookup?: DnsLookup
-  /** Stubbed Exa client used by the /search route. Tests inject a fake to
-   *  avoid `mock.module('exa-js')`, which leaks across files. Default:
-   *  resolved from EXA_API_KEY at request time. */
-  searchExaClient?: SearchExaClient | null
+  /** Stand-in search provider used by the /search route. Tests inject a fake to
+   *  avoid `mock.module('exa-js')`, which leaks across files. Provider-shaped
+   *  rather than Exa-shaped so the injected stub exercises the same normalization
+   *  a real adapter's output goes through. Default: resolved from settings at
+   *  request time. */
+  searchProvider?: WebSearchProvider | null
 }

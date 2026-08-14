@@ -128,7 +128,13 @@ export const createApp = async (deps?: AppDeps) => {
           observability: proxyObservability,
         }),
       )
-      .use(createSearchRoutes(auth, proRateLimit, { exaClient: deps?.searchExaClient }))
+      .use(
+        createSearchRoutes(
+          auth,
+          proRateLimit,
+          deps && 'searchProvider' in deps ? { searchProvider: deps.searchProvider } : {},
+        ),
+      )
       .use(createPreviewRoutes({ auth, fetchFn, rateLimit: proRateLimit, dnsLookup: deps?.dnsLookup }))
       .use(
         createInferenceRoutes({

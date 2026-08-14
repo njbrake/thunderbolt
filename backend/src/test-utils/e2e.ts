@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { mock } from 'bun:test'
-import type { SearchExaClient } from '@/api/search'
+import type { WebSearchProvider } from '@/web/types'
 import { createAuth } from '@/auth/auth'
 import { challengeTokenHeader } from '@/auth/otp-constants'
 import { session as sessionTable, user, waitlist } from '@/db/schema'
@@ -56,7 +56,7 @@ export const createTestApp = async (
     upstreamWsFactory?: (url: string, protocols?: string[]) => WebSocket
     proxyObservability?: import('@/proxy/observability').ObservabilityRecorder
     dnsLookup?: DnsLookup
-    searchExaClient?: SearchExaClient | null
+    searchProvider?: WebSearchProvider | null
     /** Inject an ISOLATED PGlite DB (own connection, committed rows) for tests
      *  that bind a real `.listen()` server. Without this, the server-side
      *  getSession read runs through the shared BEGIN/ROLLBACK singleton and can
@@ -90,7 +90,7 @@ export const createTestApp = async (
     upstreamWsFactory: options.upstreamWsFactory,
     proxyObservability: options.proxyObservability,
     dnsLookup: options.dnsLookup ?? e2eDnsLookup,
-    searchExaClient: options.searchExaClient,
+    ...('searchProvider' in options ? { searchProvider: options.searchProvider } : {}),
   })
 
   await auth.api.sendVerificationOTP({ body: { email, type: 'sign-in' } })

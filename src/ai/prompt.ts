@@ -23,8 +23,9 @@ export type PromptParams = {
   }
   /** Integration status for the model to check before showing connect widget */
   integrationStatus: string
-  /** Whether the built-in web tools (`search`, `fetch_content`) are available for this request */
-  hasWebTools: boolean
+  /** Which built-in web tools are available for this request. Per tool because the
+   *  backend configures search and page fetch separately, so either can be absent. */
+  webTools: { search: boolean; fetchContent: boolean }
   /** Summary of connected MCP servers (name + tool count) */
   mcpServersSummary?: string
   /** Enabled skills available to the model */
@@ -63,7 +64,7 @@ export const createPromptParts = (
     location,
     localization,
     integrationStatus,
-    hasWebTools,
+    webTools,
     mcpServersSummary,
     skills = [],
     supportsTools = true,
@@ -72,6 +73,8 @@ export const createPromptParts = (
 ): PromptParts => {
   const toolsOverride = profile?.toolsOverride ?? undefined
   const linkPreviewsOverride = profile?.linkPreviewsOverride ?? undefined
+  // Empty when neither web tool is present, which drops the section entirely.
+  const webToolsSection = webToolsPrompt(webTools)
   // Chat is the only conversation style now (Search/Research ship as default
   // skills), so its per-model addendum is the only one applied.
   const chatAddendum = profile?.chatModeAddendum ?? undefined
@@ -127,7 +130,7 @@ Choose one policy bucket before answering:
 Don't repeat a tool call you already made this conversation with the same inputs—reuse the earlier result. Re-search only when the user asks for something new, something time-sensitive that may have changed, or detail the earlier results lack.
 Think about what widget components to show the user, then work backwards to the tools you need.
 Don't mention tool names unless asked.
-${hasWebTools ? `\n${webToolsPrompt}` : ''}
+${webToolsSection ? `\n${webToolsSection}` : ''}
 ${toolsOverride ? `\n${toolsOverride}` : ''}
 ${mcpServersSummary ? `\n## Connected MCP Servers\nYou have tools from these external services (tool names prefixed by server name):\n${mcpServersSummary}\nUse these when the user asks about these services.` : ''}
 ${skillDisclosure ? `\n${skillDisclosure}` : ''}

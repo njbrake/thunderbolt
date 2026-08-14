@@ -48,7 +48,7 @@ const baseParams: PromptParams = {
     currency: 'USD',
   },
   integrationStatus: 'READY',
-  hasWebTools: false,
+  webTools: { search: false, fetchContent: false },
 }
 
 describe('assembleBuiltInModelInput', () => {
@@ -171,15 +171,31 @@ describe('createPrompt', () => {
   })
 
   test('includes web tool rules in the stable prompt when the web tools are available', () => {
-    const result = createPromptParts({ ...baseParams, hasWebTools: true })
+    const result = createPromptParts({ ...baseParams, webTools: { search: true, fetchContent: true } })
 
     expect(result.stablePrompt).toContain('Web lookups use the `search` and `fetch_content` tools')
   })
 
   test('omits web tool rules from the stable prompt when the web tools are unavailable', () => {
-    const result = createPromptParts({ ...baseParams, hasWebTools: false })
+    const result = createPromptParts({ ...baseParams, webTools: { search: false, fetchContent: false } })
 
     expect(result.stablePrompt).not.toContain('Web lookups use the `search` and `fetch_content` tools')
+  })
+
+  // A deployment can hold a search provider and no page fetcher. Naming a tool the
+  // model does not have invites a call that cannot be dispatched.
+  test('describes only search when the deployment has no page fetcher', () => {
+    const result = createPromptParts({ ...baseParams, webTools: { search: true, fetchContent: false } })
+
+    expect(result.stablePrompt).toContain('Web lookups use the `search` tool')
+    expect(result.stablePrompt).not.toContain('fetch_content')
+  })
+
+  test('describes only fetch_content when the deployment has no search provider', () => {
+    const result = createPromptParts({ ...baseParams, webTools: { search: false, fetchContent: true } })
+
+    expect(result.stablePrompt).toContain('`fetch_content`')
+    expect(result.stablePrompt).not.toContain('Web lookups use the `search`')
   })
 
   test('includes the reuse-before-search gate', () => {
@@ -203,7 +219,7 @@ describe('createPrompt', () => {
   })
 
   test('limits quick web lookups to one search and conditional fetching', () => {
-    const result = createPrompt({ ...baseParams, hasWebTools: true })
+    const result = createPrompt({ ...baseParams, webTools: { search: true, fetchContent: true } })
     expect(result).toContain('run at most one search')
     expect(result).toContain('Fetch a page only when the snippets are insufficient')
   })

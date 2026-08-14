@@ -4,33 +4,35 @@
 
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 
-import type { SearchExaClient } from '@/api/search'
 import { authHeaders, createTestApp, type TestAppHandle } from '@/test-utils/e2e'
+import type { WebSearchProvider } from '@/web/types'
 
-/** Build a stub Exa client whose `search` returns the canned results below.
- *  Passed to createTestApp via dep injection — replaces `mock.module('exa-js')`,
- *  which would leak across files (see docs/development/testing.md). */
-const createStubExaClient = (): SearchExaClient => {
-  const search = mock(async (_q: string, _opts: unknown) => ({
-    results: [
-      {
-        id: '1',
-        title: 'Public site',
-        url: 'https://example.com/post',
-        image: 'http://example.com/cover.png', // forces http -> https upgrade in the route
-        favicon: 'https://example.com/favicon.ico',
-      },
-      {
-        id: '2',
-        title: null,
-        url: 'http://example.org/another', // forces http -> https upgrade
-        image: null,
-        favicon: null,
-      },
-    ],
-  }))
-  return { search: search as unknown as SearchExaClient['search'] }
-}
+/** Build a stub search provider returning the canned hits below. Passed to
+ *  createTestApp via dep injection — replaces `mock.module('exa-js')`, which would
+ *  leak across files (see docs/development/testing.md).
+ *
+ *  Provider-shaped rather than Exa-shaped, which is the point of the seam: the
+ *  hits still go through `normalizeSearchHits` in the route, so the HTTPS
+ *  upgrades, favicon derivation, and title fallback asserted below are the ones
+ *  every adapter's output gets. Exa's own field mapping is covered in
+ *  `web/exa.test.ts`. */
+const createStubSearchProvider = (): WebSearchProvider => ({
+  id: 'stub',
+  search: mock(async (_q: string, _opts: unknown) => [
+    {
+      title: 'Public site',
+      url: 'https://example.com/post',
+      previewImageUrl: 'http://example.com/cover.png', // forces http -> https upgrade
+      faviconUrl: 'https://example.com/favicon.ico',
+    },
+    {
+      title: null,
+      url: 'http://example.org/another', // forces http -> https upgrade
+      previewImageUrl: null,
+      faviconUrl: null,
+    },
+  ]),
+})
 
 describe('GET /v1/search — e2e', () => {
   let handle: TestAppHandle
@@ -42,7 +44,7 @@ describe('GET /v1/search — e2e', () => {
   })
 
   it('returns normalised results with HTTPS-only URLs', async () => {
-    handle = await createTestApp({ searchExaClient: createStubExaClient() })
+    handle = await createTestApp({ searchProvider: createStubSearchProvider() })
     const res = await handle.app.handle(
       new Request('http://localhost/v1/search?q=hello&limit=5', {
         method: 'GET',
@@ -69,7 +71,7 @@ describe('GET /v1/search — e2e', () => {
   })
 
   it('returns 401 for unauthenticated requests', async () => {
-    handle = await createTestApp({ searchExaClient: createStubExaClient() })
+    handle = await createTestApp({ searchProvider: createStubSearchProvider() })
     const res = await handle.app.handle(new Request('http://localhost/v1/search?q=hello', { method: 'GET' }))
     expect(res.status).toBe(401)
   })

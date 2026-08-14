@@ -2,31 +2,38 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { createExaFetchProvider } from '@/web/exa'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { Elysia } from 'elysia'
-import { createExaPlugin } from './exa'
+import { createFetchContentPlugin } from './fetch-content'
 
 /**
- * Mount the real plugin against a stand-in client.
+ * Mount the real route over the real Exa adapter, with only the SDK call stubbed.
  *
  * This file used to define its own Elysia app with both route bodies copied into
- * it, so nothing here ever executed `exa.ts`. Two things followed: the response
+ * it, so nothing here ever executed the route. Two things followed: the response
  * mapping was never actually asserted, and the copy kept a `/search` route that
  * the plugin does not define, so a dozen tests exercised a handler that ships
  * nowhere. Those are gone; `/v1/search` lives in `api/search.ts`.
  *
- * `null` means "no API key configured", which is why `createExaPlugin` checks for
- * the key's presence rather than coalescing.
+ * Going through the adapter rather than injecting a bare provider keeps the
+ * `getContents` assertions below meaningful: they check that the route's clamped
+ * `max_length` reaches the SDK. `null` means no provider configured.
  */
-const mountExaPlugin = (exaClient: unknown) => new Elysia().use(createExaPlugin({ exaClient: exaClient as never }))
+const mountFetchContent = (exaClient: unknown) =>
+  new Elysia().use(
+    createFetchContentPlugin({
+      fetchProvider: exaClient ? createExaFetchProvider(exaClient as never) : null,
+    }),
+  )
 
-describe('Pro - Exa Plugin', () => {
-  let app: ReturnType<typeof mountExaPlugin>
+describe('Pro - fetch-content route', () => {
+  let app: ReturnType<typeof mountFetchContent>
   let mockGetContents: any
 
   beforeEach(() => {
     mockGetContents = mock(() => Promise.resolve({ results: [] }))
-    app = mountExaPlugin({ getContents: mockGetContents })
+    app = mountFetchContent({ getContents: mockGetContents })
   })
 
   describe('POST /fetch-content', () => {
@@ -74,7 +81,7 @@ describe('Pro - Exa Plugin', () => {
     // The reason `WebPageContent` exists. The route used to spread the provider's
     // object onto the response, so these two assertions could not both hold: the
     // date arrived under Exa's spelling and every incidental provider field came
-    // with it. Revert the mapping in `exa.ts` and this fails on the first assert.
+    // with it. Revert the mapping in `web/exa.ts` and this fails on the first assert.
     it('publishes the provider date under the DTO name and drops provider-only fields', async () => {
       mockGetContents.mockResolvedValueOnce({
         results: [
@@ -135,8 +142,8 @@ describe('Pro - Exa Plugin', () => {
     })
 
     it('should throw error when API key is not configured', async () => {
-      // Create app with null client to simulate no API key
-      const appNoKey = mountExaPlugin(null)
+      // No provider resolved, which is what an unconfigured deployment looks like
+      const appNoKey = mountFetchContent(null)
 
       const response = await appNoKey.handle(
         new Request('http://localhost/fetch-content', {

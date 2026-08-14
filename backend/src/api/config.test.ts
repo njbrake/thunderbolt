@@ -62,12 +62,22 @@ describe('Config Routes', () => {
     // The frontend decides which tools to hand the model and cannot see the
     // backend's credentials. Without this flag it offered web search regardless,
     // so a deployment with no EXA_API_KEY failed the tool call mid-answer.
-    it('reports webSearchEnabled from whether an Exa credential is configured', async () => {
+    it('reports both web capabilities from whether a credential is configured', async () => {
       const withKey = await fetchConfig(createTestSettings({ exaApiKey: 'exa-test' }))
       expect(withKey.body.webSearchEnabled).toBe(true)
+      expect(withKey.body.webFetchEnabled).toBe(true)
 
       const withoutKey = await fetchConfig(createTestSettings({ exaApiKey: '' }))
       expect(withoutKey.body.webSearchEnabled).toBe(false)
+      expect(withoutKey.body.webFetchEnabled).toBe(false)
+    })
+
+    // Reported separately because they are configured separately. A named provider
+    // whose credential is missing reports off rather than advertising a tool that
+    // would 503 partway through an answer.
+    it('reports a capability off when its provider is named without a credential', async () => {
+      const { body } = await fetchConfig(createTestSettings({ webSearchProvider: 'exa', exaApiKey: '' }))
+      expect(body.webSearchEnabled).toBe(false)
     })
 
     it('omits minAppVersion when MIN_APP_VERSION is unset', async () => {

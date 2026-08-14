@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { selectWebSearchEnabled, useConfigStore } from '@/api/config-store'
+import { selectWebFetchEnabled, selectWebSearchEnabled, useConfigStore } from '@/api/config-store'
 import { renderHtmlTool } from '@/artifacts/render-html-tool'
 import type { HttpClient } from '@/contexts'
 import { getIntegrationStatus, getSettings } from '@/dal'
@@ -53,15 +53,22 @@ export const getAvailableTools = async (
 
   // The deployment gate is separate from the two user-facing ones on purpose.
   // `proEnabled` and `integrationsProIsEnabled` describe whether the user wants
-  // web tools; this describes whether the backend can actually service them. Both
-  // pro tools are Exa-backed, so a backend without that credential answers 503 on
-  // /search and throws on /pro/fetch-content. Offering them anyway means the model
-  // reaches for web search and the call fails partway through an answer.
-  const deploymentServesWebTools = selectWebSearchEnabled(useConfigStore.getState().config)
-  const shouldIncludeProTools = proEnabled && integrationsProIsEnabled && deploymentServesWebTools
+  // web tools; the config flags describe which ones the backend can actually
+  // service. A backend with no provider answers 503 on /search and throws on
+  // /pro/fetch-content, so offering that tool anyway means the model reaches for it
+  // and the call fails partway through an answer.
+  //
+  // Reported per tool, because the backend configures them separately: a search
+  // provider need not fetch pages.
+  const config = useConfigStore.getState().config
+  const userWantsProTools = proEnabled && integrationsProIsEnabled
+  const capabilities = {
+    search: userWantsProTools && selectWebSearchEnabled(config),
+    fetchContent: userWantsProTools && selectWebFetchEnabled(config),
+  }
 
-  if (shouldIncludeProTools) {
-    baseTools.push(...createProConfigs(httpClient, sourceCollector))
+  if (capabilities.search || capabilities.fetchContent) {
+    baseTools.push(...createProConfigs(httpClient, sourceCollector, capabilities))
   }
 
   if (integrationStatus.googleEnabled) {

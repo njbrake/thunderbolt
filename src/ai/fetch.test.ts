@@ -105,7 +105,7 @@ describe('selectPromptSkillDefinitions', () => {
         currency: 'USD',
       },
       integrationStatus: 'READY',
-      hasWebTools: false,
+      webTools: { search: false, fetchContent: false },
       skills: selectPromptSkillDefinitions(storedSkills, supportsTools),
       supportsTools,
     })

@@ -3,7 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { selectAllowCustomAgents, selectBuiltInAgentEnabled, useConfigStore } from './config-store'
+import {
+  selectAllowCustomAgents,
+  selectBuiltInAgentEnabled,
+  selectWebFetchEnabled,
+  selectWebSearchEnabled,
+  useConfigStore,
+} from './config-store'
 
 const storageKey = 'thunderbolt-config'
 
@@ -70,5 +76,27 @@ describe('selectAllowCustomAgents', () => {
 
   it('is forbidden only when explicitly false', () => {
     expect(selectAllowCustomAgents({ allowCustomAgents: false })).toBe(false)
+  })
+})
+
+describe('web capability selectors', () => {
+  it('default to enabled when both flags are absent', () => {
+    // An offline or standalone client keeps the behaviour it had rather than
+    // silently losing web access.
+    expect(selectWebSearchEnabled({})).toBe(true)
+    expect(selectWebFetchEnabled({})).toBe(true)
+  })
+
+  it('report each capability independently', () => {
+    expect(selectWebSearchEnabled({ webSearchEnabled: true, webFetchEnabled: false })).toBe(true)
+    expect(selectWebFetchEnabled({ webSearchEnabled: true, webFetchEnabled: false })).toBe(false)
+  })
+
+  // A backend predating the split sends only `webSearchEnabled`, where one flag
+  // governed both tools. Defaulting fetch to `true` there would switch page fetch
+  // on against a deployment that reported having no web provider at all.
+  it('follows webSearchEnabled when the fetch flag is absent', () => {
+    expect(selectWebFetchEnabled({ webSearchEnabled: false })).toBe(false)
+    expect(selectWebFetchEnabled({ webSearchEnabled: true })).toBe(true)
   })
 })

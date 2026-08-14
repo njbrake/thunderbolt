@@ -322,3 +322,28 @@ describe('createConfigs source collector', () => {
     expect(result[1].sourceIndex).toBe(2)
   })
 })
+
+describe('createConfigs capability gating', () => {
+  const client = createMockHttpClient({ results: [] })
+  const names = (capabilities?: Parameters<typeof createConfigs>[2]) =>
+    createConfigs(client, undefined, capabilities).map((config) => config.name)
+
+  it('offers both tools when no capabilities are given', () => {
+    expect(names()).toEqual(['search', 'fetch_content'])
+  })
+
+  // The whole point of the split: a deployment with a search provider and no page
+  // fetcher must not advertise `fetch_content`, because the model cannot be told a
+  // tool exists but does not work.
+  it('omits fetch_content on a search-only deployment', () => {
+    expect(names({ search: true, fetchContent: false })).toEqual(['search'])
+  })
+
+  it('omits search on a fetch-only deployment', () => {
+    expect(names({ search: false, fetchContent: true })).toEqual(['fetch_content'])
+  })
+
+  it('offers nothing when neither capability is available', () => {
+    expect(names({ search: false, fetchContent: false })).toEqual([])
+  })
+})

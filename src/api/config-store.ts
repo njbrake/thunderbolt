@@ -13,8 +13,11 @@ export type AppConfig = {
    *  built-in agent shown, custom agents allowed. */
   builtInAgentEnabled?: boolean
   allowCustomAgents?: boolean
-  /** Whether the backend holds the credential behind `search` and `fetch_content`. */
+  /** Whether the backend has a provider behind `search`. */
   webSearchEnabled?: boolean
+  /** Whether the backend has a provider behind `fetch_content`. Absent on a backend
+   *  predating the split, where `webSearchEnabled` governed both. */
+  webFetchEnabled?: boolean
   /** Minimum semver string the server allows. Clients below this are hard-blocked
    *  until they upgrade. Absent/empty = no enforcement. */
   minAppVersion?: string
@@ -55,11 +58,23 @@ export const selectBuiltInAgentEnabled = (config: AppConfig): boolean => config.
 export const selectAllowCustomAgents = (config: AppConfig): boolean => config.allowCustomAgents !== false
 
 /**
- * Whether to hand the model the web tools (`search`, `fetch_content`).
+ * Whether to hand the model the `search` tool.
  *
  * Absent defaults to enabled, matching the other flags here: a backend predating
  * this field, or a client that has not fetched config yet, keeps the behavior it
- * had rather than silently losing web access. Only an explicit `false` — a
- * backend saying it holds no Exa credential — withdraws the tools.
+ * had rather than silently losing web access. Only an explicit `false`, a backend
+ * saying it has no search provider, withdraws the tool.
  */
 export const selectWebSearchEnabled = (config: AppConfig): boolean => config.webSearchEnabled !== false
+
+/**
+ * Whether to hand the model the `fetch_content` tool.
+ *
+ * Separate from search because the backend configures them separately: a search
+ * provider need not fetch pages. Falls back to `webSearchEnabled` rather than
+ * defaulting to `true` on its own, so a backend predating the split (which reported
+ * one flag for both) still gets both tools or neither, instead of having page fetch
+ * silently switched on against a deployment that cannot serve it.
+ */
+export const selectWebFetchEnabled = (config: AppConfig): boolean =>
+  config.webFetchEnabled ?? selectWebSearchEnabled(config)
