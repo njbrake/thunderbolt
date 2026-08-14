@@ -57,21 +57,26 @@ export type SearchResultData = {
 }
 
 /**
- * Data type for fetched webpage content.
+ * Data type for fetched webpage content. Mirrors the backend's `WebPageContent`,
+ * which `POST /v1/pro/fetch-content` returns.
  * - text: May be truncated to ~16K chars to prevent context overflow
  * - isTruncated: True if text was truncated
+ *
+ * This is a hand-written mirror of a contract declared in another package, so the
+ * two can drift without a compiler noticing, and they had: this named the field
+ * `published_date` while the route has always emitted `publishedDate`, so the
+ * date silently never arrived. Change one side and change the other.
  */
 export type FetchContentData = {
   url: string
   title: string | null
   text: string
   isTruncated?: boolean
-  highlights?: string[]
-  highlightScores?: number[]
   favicon: string | null
   image: string | null
   author: string | null
-  published_date: string | null
+  publishedDate: string | null
+  /** Optional source index assigned client-side when results are merged into a chat. */
   sourceIndex?: number
 } | null
 

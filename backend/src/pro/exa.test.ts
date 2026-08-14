@@ -3,289 +3,30 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
-import { Elysia, t } from 'elysia'
+import { Elysia } from 'elysia'
+import { createExaPlugin } from './exa'
 
-// Create a test version of the plugin with mocked Exa client
-const createTestExaPlugin = (mockExaClient: any) => {
-  return new Elysia({ name: 'exa-test' })
-    .onError(({ code, error, set }) => {
-      set.status = code === 'VALIDATION' ? 400 : 500
-      return {
-        success: false,
-        data: null,
-        error: error instanceof Error ? error.message : String(error),
-      }
-    })
-    .state('exaClient', mockExaClient)
-    .post(
-      '/search',
-      async ({ body, store }): Promise<any> => {
-        if (!store.exaClient) {
-          throw new Error('Search service is not configured.')
-        }
-
-        const response = await store.exaClient.search(body.query, {
-          numResults: body.max_results,
-          useAutoprompt: true,
-          type: 'fast',
-        })
-
-        return {
-          data: response.results,
-          success: true,
-        }
-      },
-      {
-        body: t.Object({
-          query: t.String(),
-          max_results: t.Optional(t.Number({ default: 10 })),
-        }),
-      },
-    )
-    .post(
-      '/fetch-content',
-      async ({ body, store }): Promise<any> => {
-        if (!store.exaClient) {
-          throw new Error('Fetch content service is not configured.')
-        }
-
-        const defaultMaxChars = 16_000
-        const hardCap = 64_000
-        const minChars = 1_000
-        const requestedMax = body.max_length ?? defaultMaxChars
-        const maxCharacters = Math.min(Math.max(requestedMax, minChars), hardCap)
-
-        const response = await store.exaClient.getContents([body.url], {
-          livecrawlTimeout: 5_000,
-          extras: { imageLinks: 1 },
-          text: { maxCharacters },
-        })
-
-        const result = response.results[0]
-        if (!result) {
-          return { data: null, success: true }
-        }
-
-        // Use >= as a conservative check: if Exa returns exactly maxCharacters,
-        // the original content was likely longer and got truncated by Exa's API
-        const isTruncated = (result.text?.length ?? 0) >= maxCharacters
-
-        // If truncated and not at hard cap, suggest fetching more
-        const truncationHint =
-          isTruncated && maxCharacters < hardCap
-            ? `\n\n[Content truncated. Call fetch_content with max_length=${Math.min(maxCharacters * 2, hardCap)} for more.]`
-            : ''
-
-        return {
-          data: {
-            ...result,
-            text: (result.text ?? '') + truncationHint,
-            isTruncated,
-          },
-          success: true,
-        }
-      },
-      {
-        body: t.Object({
-          url: t.String(),
-          max_length: t.Optional(t.Number()),
-        }),
-      },
-    )
-}
+/**
+ * Mount the real plugin against a stand-in client.
+ *
+ * This file used to define its own Elysia app with both route bodies copied into
+ * it, so nothing here ever executed `exa.ts`. Two things followed: the response
+ * mapping was never actually asserted, and the copy kept a `/search` route that
+ * the plugin does not define, so a dozen tests exercised a handler that ships
+ * nowhere. Those are gone; `/v1/search` lives in `api/search.ts`.
+ *
+ * `null` means "no API key configured", which is why `createExaPlugin` checks for
+ * the key's presence rather than coalescing.
+ */
+const mountExaPlugin = (exaClient: unknown) => new Elysia().use(createExaPlugin({ exaClient: exaClient as never }))
 
 describe('Pro - Exa Plugin', () => {
-  let app: any
-  let mockSearch: any
+  let app: ReturnType<typeof mountExaPlugin>
   let mockGetContents: any
 
   beforeEach(() => {
-    // Create fresh mocks
-    mockSearch = mock(() => Promise.resolve({ results: [] }))
     mockGetContents = mock(() => Promise.resolve({ results: [] }))
-
-    const mockExaClient = {
-      search: mockSearch,
-      getContents: mockGetContents,
-    }
-
-    // Create app with mocked client
-    app = new Elysia().use(createTestExaPlugin(mockExaClient))
-  })
-
-  describe('POST /search', () => {
-    it('should perform search successfully with API key configured', async () => {
-      const mockResults = [
-        {
-          title: 'Test Result',
-          url: 'https://example.com',
-          publishedDate: '2024-01-01',
-          author: 'Test Author',
-        },
-      ]
-      mockSearch.mockResolvedValueOnce({ results: mockResults })
-
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'test search' }),
-        }),
-      )
-
-      expect(response.status).toBe(200)
-      const data = await response.json()
-      expect(data).toEqual({
-        data: mockResults,
-        success: true,
-      })
-      expect(mockSearch).toHaveBeenCalledWith('test search', {
-        numResults: 10,
-        useAutoprompt: true,
-        type: 'fast',
-      })
-    })
-
-    it('should respect max_results parameter', async () => {
-      mockSearch.mockResolvedValueOnce({ results: [] })
-
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'test search', max_results: 5 }),
-        }),
-      )
-
-      expect(response.status).toBe(200)
-      expect(mockSearch).toHaveBeenCalledWith('test search', {
-        numResults: 5,
-        useAutoprompt: true,
-        type: 'fast',
-      })
-    })
-
-    it('should use default max_results when not provided', async () => {
-      mockSearch.mockResolvedValueOnce({ results: [] })
-
-      await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'test search' }),
-        }),
-      )
-
-      expect(mockSearch).toHaveBeenCalledWith('test search', {
-        numResults: 10,
-        useAutoprompt: true,
-        type: 'fast',
-      })
-    })
-
-    it('should throw error when API key is not configured', async () => {
-      // Create app with null client to simulate no API key
-      const appNoKey = new Elysia().use(createTestExaPlugin(null))
-
-      const response = await appNoKey.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'test search' }),
-        }),
-      )
-
-      expect(response.status).toBe(500)
-      const data = await response.json()
-      expect(data).toHaveProperty('success', false)
-      expect(data).toHaveProperty('data', null)
-      expect(data).toHaveProperty('error')
-      expect(data.error).toContain('Search service is not configured')
-    })
-
-    it('should return 400 when query is missing', async () => {
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        }),
-      )
-
-      expect(response.status).toBe(400)
-      const data = await response.json()
-      expect(data).toHaveProperty('success', false)
-      expect(data).toHaveProperty('error')
-    })
-
-    it('should return 400 when body is invalid', async () => {
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 123 }), // query should be string
-        }),
-      )
-
-      expect(response.status).toBe(400)
-      const data = await response.json()
-      expect(data).toHaveProperty('success', false)
-      expect(data).toHaveProperty('error')
-    })
-
-    it('should handle search API errors gracefully', async () => {
-      mockSearch.mockRejectedValueOnce(new Error('API rate limit exceeded'))
-
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'test search' }),
-        }),
-      )
-
-      expect(response.status).toBe(500)
-    })
-
-    it('should handle empty search results', async () => {
-      mockSearch.mockResolvedValueOnce({ results: [] })
-
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'obscure search query' }),
-        }),
-      )
-
-      expect(response.status).toBe(200)
-      const data = await response.json()
-      expect(data).toEqual({
-        data: [],
-        success: true,
-      })
-    })
-
-    it('should handle multiple search results', async () => {
-      const mockResults = [
-        { title: 'Result 1', url: 'https://example1.com' },
-        { title: 'Result 2', url: 'https://example2.com' },
-        { title: 'Result 3', url: 'https://example3.com' },
-      ]
-      mockSearch.mockResolvedValueOnce({ results: mockResults })
-
-      const response = await app.handle(
-        new Request('http://localhost/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: 'test search' }),
-        }),
-      )
-
-      expect(response.status).toBe(200)
-      const data = await response.json()
-      expect(data.data).toHaveLength(3)
-    })
+    app = mountExaPlugin({ getContents: mockGetContents })
   })
 
   describe('POST /fetch-content', () => {
@@ -312,8 +53,14 @@ describe('Pro - Exa Plugin', () => {
       const data = await response.json()
       expect(data).toEqual({
         data: {
-          ...mockContent[0],
+          url: 'https://example.com',
+          title: 'Test Page',
+          text: 'This is the fetched content',
           isTruncated: false,
+          author: 'Test Author',
+          publishedDate: null,
+          image: null,
+          favicon: null,
         },
         success: true,
       })
@@ -324,9 +71,72 @@ describe('Pro - Exa Plugin', () => {
       })
     })
 
+    // The reason `WebPageContent` exists. The route used to spread the provider's
+    // object onto the response, so these two assertions could not both hold: the
+    // date arrived under Exa's spelling and every incidental provider field came
+    // with it. Revert the mapping in `exa.ts` and this fails on the first assert.
+    it('publishes the provider date under the DTO name and drops provider-only fields', async () => {
+      mockGetContents.mockResolvedValueOnce({
+        results: [
+          {
+            url: 'https://example.com/dated',
+            title: 'Dated Page',
+            text: 'body',
+            publishedDate: '2024-01-01',
+            author: 'A. Writer',
+            image: 'https://example.com/i.png',
+            favicon: 'https://example.com/f.ico',
+            // Fields Exa returns that no client reads. They must not reach the wire.
+            id: 'exa-internal-id',
+            score: 0.87,
+            highlights: ['a highlight'],
+            highlightScores: [0.5],
+          },
+        ],
+      })
+
+      const response = await app.handle(
+        new Request('http://localhost/fetch-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'https://example.com/dated' }),
+        }),
+      )
+
+      const { data } = await response.json()
+      expect(data.publishedDate).toBe('2024-01-01')
+      expect(Object.keys(data).sort()).toEqual([
+        'author',
+        'favicon',
+        'image',
+        'isTruncated',
+        'publishedDate',
+        'text',
+        'title',
+        'url',
+      ])
+    })
+
+    it('nulls the optional fields the provider omitted rather than leaving them undefined', async () => {
+      mockGetContents.mockResolvedValueOnce({ results: [{ url: 'https://example.com/bare', text: 'body' }] })
+
+      const response = await app.handle(
+        new Request('http://localhost/fetch-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: 'https://example.com/bare' }),
+        }),
+      )
+
+      const { data } = await response.json()
+      // Present and null, not absent: a client destructuring these gets a value it
+      // can render a fallback for, and JSON drops `undefined` silently.
+      expect(data).toMatchObject({ title: null, author: null, publishedDate: null, image: null, favicon: null })
+    })
+
     it('should throw error when API key is not configured', async () => {
       // Create app with null client to simulate no API key
-      const appNoKey = new Elysia().use(createTestExaPlugin(null))
+      const appNoKey = mountExaPlugin(null)
 
       const response = await appNoKey.handle(
         new Request('http://localhost/fetch-content', {
@@ -337,11 +147,19 @@ describe('Pro - Exa Plugin', () => {
       )
 
       expect(response.status).toBe(500)
-      const text = await response.text()
-      expect(text).toContain('Fetch content service is not configured')
+      // Sanitized, not the thrown message. This assertion used to expect
+      // "Fetch content service is not configured" to appear in the body, which is
+      // what the copied error handler did; the real `safeErrorHandler` returns a
+      // standard reason phrase because `getSafeErrorMessage` is documented never to
+      // return internal detail. Asserting the leak would have rewarded a
+      // regression that reintroduced it.
+      expect(await response.json()).toEqual({ success: false, data: null, error: 'Internal Server Error' })
     })
 
-    it('should return 400 when url is missing', async () => {
+    // 422, not 400: Elysia's own status for a body that fails the `t.Object`
+    // schema. The previous expectation of 400 came from the copied error handler,
+    // which mapped `code === 'VALIDATION'` itself.
+    it('should return 422 when url is missing', async () => {
       const response = await app.handle(
         new Request('http://localhost/fetch-content', {
           method: 'POST',
@@ -350,13 +168,14 @@ describe('Pro - Exa Plugin', () => {
         }),
       )
 
-      expect(response.status).toBe(400)
-      const data = await response.json()
-      expect(data).toHaveProperty('success', false)
-      expect(data).toHaveProperty('error')
+      expect(response.status).toBe(422)
+      // Elysia's own validation payload, naming the offending property. The old
+      // assertions here were `success: false` plus an `error` string, which is the
+      // envelope the copied handler produced and not what a client receives.
+      expect(await response.json()).toMatchObject({ type: 'validation', on: 'body', property: '/url' })
     })
 
-    it('should return 400 when url is not a string', async () => {
+    it('should return 422 when url is not a string', async () => {
       const response = await app.handle(
         new Request('http://localhost/fetch-content', {
           method: 'POST',
@@ -365,10 +184,8 @@ describe('Pro - Exa Plugin', () => {
         }),
       )
 
-      expect(response.status).toBe(400)
-      const data = await response.json()
-      expect(data).toHaveProperty('success', false)
-      expect(data).toHaveProperty('error')
+      expect(response.status).toBe(422)
+      expect(await response.json()).toMatchObject({ type: 'validation', on: 'body', property: '/url' })
     })
 
     it('should handle fetch API errors gracefully', async () => {

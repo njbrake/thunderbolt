@@ -80,7 +80,7 @@ describe('Thunderbolt Pro Tools', () => {
           favicon: 'https://example.com/favicon.ico',
           image: 'https://example.com/image.jpg',
           author: 'John Doe',
-          published_date: '2024-01-01T10:00:00Z',
+          publishedDate: '2024-01-01T10:00:00Z',
         },
         success: true,
       }
@@ -105,7 +105,7 @@ describe('Thunderbolt Pro Tools', () => {
           favicon: null,
           image: null,
           author: null,
-          published_date: null,
+          publishedDate: null,
         },
         success: true,
       }
@@ -245,7 +245,7 @@ describe('createConfigs source collector', () => {
       favicon: 'https://example.com/fav.ico',
       image: null,
       author: 'Jane Doe',
-      published_date: '2024-06-15',
+      publishedDate: '2024-06-15',
     })
     const sourceCollector: SourceMetadata[] = []
     const configs = createConfigs(dummyHttpClient, sourceCollector)
@@ -274,7 +274,7 @@ describe('createConfigs source collector', () => {
       favicon: 'https://example.com/fav.ico',
       image: 'https://example.com/hero.jpg',
       author: 'Jane Doe',
-      published_date: '2024-06-15',
+      publishedDate: '2024-06-15',
     })
     const configs = createConfigs(dummyHttpClient, sourceCollector)
 
@@ -298,7 +298,7 @@ describe('createConfigs source collector', () => {
       favicon: null,
       image: null,
       author: null,
-      published_date: null,
+      publishedDate: null,
     })
     const sourceCollector: SourceMetadata[] = []
     const configs = createConfigs(dummyHttpClient, sourceCollector)
