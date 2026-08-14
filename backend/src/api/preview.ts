@@ -5,6 +5,7 @@
 import type { Auth } from '@/auth/elysia-plugin'
 import { createAuthMacro } from '@/auth/elysia-plugin'
 import { safeErrorHandler } from '@/middleware/error-handling'
+import { readCappedBody } from '@/utils/capped-body'
 import { createSafeFetch, ensureHttps, validateSafeUrl, type DnsLookup } from '@/utils/url-validation'
 import { Elysia, t, type AnyElysia } from 'elysia'
 
@@ -21,37 +22,6 @@ const userAgent =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 
 const emptyPreview: PreviewDto = { previewImageUrl: null, summary: null, title: null, siteName: null }
-
-/** Read up to `maxBytes` from a body stream, returning null if the cap is exceeded.
- *  Avoids buffering an entire response when Content-Length is missing or lying. */
-const readCappedBody = async (body: ReadableStream<Uint8Array>, maxBytes: number): Promise<Uint8Array | null> => {
-  const reader = body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) {
-        break
-      }
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {})
-        return null
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  const out = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return out
-}
 
 const decodeHtmlEntities = (text: string): string =>
   text

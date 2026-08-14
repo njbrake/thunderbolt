@@ -17,6 +17,7 @@ import {
   perplexityCompatibleProviderId,
   searxngProviderId,
 } from './http-search'
+import { createReadabilityFetchProvider, readabilityProviderId } from './readability'
 import type { WebFetchProvider, WebSearchProvider } from './types'
 
 /**
@@ -88,6 +89,8 @@ export const resolveWebFetchProvider = (
       const client = exaClientFactory()
       return client ? createExaFetchProvider(client) : null
     }
+    case readabilityProviderId:
+      return createReadabilityFetchProvider()
     default:
       return null
   }
@@ -119,6 +122,10 @@ const providerIsUsable = (providerId: string, settings: ProviderSettings): boole
       // (a self-hosted SearXNG, an otari on a private network), so an API key is
       // optional and its absence is not a misconfiguration.
       return !!settings.webSearchUrl
+    case readabilityProviderId:
+      // Nothing to configure: it needs the network and nothing else. Which is also
+      // why it is never inferred, only named.
+      return true
     default:
       return false
   }

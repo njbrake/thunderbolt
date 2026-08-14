@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { createExaFetchProvider } from '@/web/exa'
+import { createReadabilityFetchProvider } from '@/web/readability'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { Elysia } from 'elysia'
 import { createFetchContentPlugin } from './fetch-content'
@@ -455,5 +456,57 @@ describe('Pro - fetch-content route', () => {
       expect(data.data.isTruncated).toBe(true)
       expect(data.data.text).toContain('[Content truncated. Call fetch_content with max_length=64000 for more.]')
     })
+  })
+})
+
+/**
+ * The route over the readability provider, which is the combination a deployment
+ * with no contents vendor runs. Asserted here rather than only in the adapter's own
+ * tests because the truncation hint is the route's contribution, and the model's
+ * behaviour depends on the two halves agreeing.
+ */
+describe('Pro - fetch-content over the readability provider', () => {
+  const pageHtml = (body: string) =>
+    `<!doctype html><html><head><title>A Page</title></head><body><article><p>${body}</p></article></body></html>`
+
+  const mountReadability = (html: string) =>
+    new Elysia().use(
+      createFetchContentPlugin({
+        fetchProvider: createReadabilityFetchProvider({
+          fetchFn: (async () =>
+            new Response(html, { status: 200, headers: { 'Content-Type': 'text/html' } })) as unknown as typeof fetch,
+          dnsLookup: async () => [{ address: '93.184.216.34', family: 4 }],
+        }),
+      }),
+    )
+
+  const fetchContentOnce = async (html: string, maxLength?: number) => {
+    const response = await mountReadability(html).handle(
+      new Request('http://localhost/fetch-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/post', ...(maxLength ? { max_length: maxLength } : {}) }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    return (await response.json()).data
+  }
+
+  it('returns extracted text with no credential configured anywhere', async () => {
+    const data = await fetchContentOnce(pageHtml('A paragraph long enough to be treated as the article body here.'))
+
+    expect(data.text).toContain('A paragraph long enough')
+    expect(data.title).toBe('A Page')
+    expect(data.isTruncated).toBe(false)
+    expect(data.text).not.toContain('[Content truncated')
+  })
+
+  it('appends the same truncation hint the Exa path produces', async () => {
+    // `max_length` is clamped to a 1000 minimum by the route, so ask for that and
+    // hand back more than it.
+    const data = await fetchContentOnce(pageHtml('B'.repeat(4_000)), 1_000)
+
+    expect(data.isTruncated).toBe(true)
+    expect(data.text).toContain('[Content truncated. Call fetch_content with max_length=2000 for more.]')
   })
 })

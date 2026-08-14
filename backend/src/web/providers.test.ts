@@ -115,3 +115,33 @@ describe('HTTP search adapter selection', () => {
     expect(getWebCapabilities(settings)).toEqual({ webSearchEnabled: true, webFetchEnabled: true })
   })
 })
+
+describe('readability fetch adapter selection', () => {
+  it('is selected by name and needs no credential', () => {
+    const settings = createTestSettings({ webFetchProvider: 'readability' })
+    expect(resolveWebFetchProvider(settings, noClient)?.id).toBe('readability')
+    expect(getWebCapabilities(settings).webFetchEnabled).toBe(true)
+  })
+
+  // Never inferred, even though it would work: it needs no credential, so inferring
+  // it would turn an unconfigured deployment into one that fetches model-supplied
+  // URLs from the backend without an operator choosing that.
+  it('is not inferred for a deployment that configured nothing', () => {
+    const settings = createTestSettings()
+    expect(resolveWebFetchProvider(settings, noClient)).toBeNull()
+    expect(getWebCapabilities(settings).webFetchEnabled).toBe(false)
+  })
+
+  // The configuration that makes a gateway-only deployment whole: search from otari,
+  // page fetch from the backend itself, no commercial credential anywhere.
+  it('pairs with a gateway search provider to give both tools with no vendor key', () => {
+    const settings = createTestSettings({
+      webSearchProvider: 'perplexity-compatible',
+      webSearchUrl: 'https://gateway.example/v1',
+      webFetchProvider: 'readability',
+    })
+    expect(resolveWebSearchProvider(settings, noClient)?.id).toBe('perplexity-compatible')
+    expect(resolveWebFetchProvider(settings, noClient)?.id).toBe('readability')
+    expect(getWebCapabilities(settings)).toEqual({ webSearchEnabled: true, webFetchEnabled: true })
+  })
+})

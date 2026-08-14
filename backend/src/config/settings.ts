@@ -28,7 +28,7 @@ const settingsSchema = z
     // Search and fetch are separate settings because they are separate
     // capabilities; one provider can serve search and another page fetch.
     webSearchProvider: z.enum(['', 'exa', 'perplexity-compatible', 'searxng']).default(''),
-    webFetchProvider: z.enum(['', 'exa']).default(''),
+    webFetchProvider: z.enum(['', 'exa', 'readability']).default(''),
     // Where the HTTP search adapters point. Base URL only: each adapter appends its
     // own path, so give `https://gateway.example/v1` and not `.../v1/search`.
     // `webSearchToolName` names one tool on a backend hosting several (otari's
