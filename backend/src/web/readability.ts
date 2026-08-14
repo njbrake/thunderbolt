@@ -7,7 +7,7 @@ import { createSafeFetch, ensureHttps, validateSafeUrl, type DnsLookup } from '@
 import { Readability } from '@mozilla/readability'
 import { deriveFaviconUrl } from '@shared/url'
 import { parseHTML } from 'linkedom'
-import type { WebFetchOptions, WebFetchProvider, WebPageContent } from './types'
+import { WebFetchUnavailableError, type WebFetchOptions, type WebFetchProvider, type WebPageContent } from './types'
 
 /**
  * Page fetch with no contents vendor: fetch the URL from the backend and extract
@@ -109,13 +109,16 @@ export const createReadabilityFetchProvider = (options: ReadabilityProviderOptio
     fetchContent: async (url: string, { maxCharacters }: WebFetchOptions): Promise<WebPageContent | null> => {
       const validation = validateSafeUrl(url)
       if (!validation.valid) {
-        throw new Error(validation.error ?? 'Invalid URL')
+        throw new WebFetchUnavailableError(validation.error ?? 'Invalid URL')
       }
 
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
       let html: string
       try {
+        // `safeFetch` rejects for a refused connection, the abort above, and every
+        // SSRF refusal. All of those are verdicts about this URL rather than faults
+        // in the fetcher, so they carry through as the same typed failure below.
         const response = await safeFetch(url, {
           method: 'GET',
           headers: {
@@ -127,7 +130,7 @@ export const createReadabilityFetchProvider = (options: ReadabilityProviderOptio
         })
 
         if (!response.ok) {
-          throw new Error(`Upstream responded ${response.status}`)
+          throw new WebFetchUnavailableError(`The page returned HTTP ${response.status}`)
         }
         if (!isHtmlContentType(response.headers.get('content-type'))) {
           // A PDF, an image, a download. Nothing to extract, and the port treats null
@@ -140,9 +143,19 @@ export const createReadabilityFetchProvider = (options: ReadabilityProviderOptio
         }
         const buffer = await readCappedBody(response.body, maxHtmlBytes)
         if (!buffer) {
-          throw new Error(`Page exceeded ${maxHtmlBytes} bytes`)
+          throw new WebFetchUnavailableError(`The page is larger than ${maxHtmlBytes} bytes`)
         }
         html = new TextDecoder().decode(buffer)
+      } catch (error) {
+        if (error instanceof WebFetchUnavailableError) {
+          throw error
+        }
+        const reason = controller.signal.aborted
+          ? `The page did not respond within ${timeoutMs}ms`
+          : error instanceof Error
+            ? error.message
+            : 'The page could not be fetched'
+        throw new WebFetchUnavailableError(reason)
       } finally {
         clearTimeout(timeoutId)
       }

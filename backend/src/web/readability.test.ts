@@ -111,7 +111,7 @@ describe('readability fetch provider limits', () => {
     const huge = `<html><body><p>${'A'.repeat(5 * 1024 * 1024)}</p></body></html>`
     await expect(
       provider(respondWith(huge)).fetchContent('https://example.com/huge', { maxCharacters: 16_000 }),
-    ).rejects.toThrow('exceeded')
+    ).rejects.toThrow('larger than')
   })
 
   it('returns nothing for a body that is not HTML', async () => {
@@ -200,6 +200,42 @@ describe('readability fetch provider timeout', () => {
         'https://slow.example/',
         { maxCharacters: 16_000 },
       ),
-    ).rejects.toThrow('aborted')
+    ).rejects.toThrow('did not respond within 25ms')
+  })
+})
+
+describe('readability fetch provider failure reasons', () => {
+  // Every one of these is a verdict about the URL rather than a fault in the
+  // fetcher, so each carries a reason the model can read and act on. The route
+  // turns them into a readable envelope instead of an opaque 500.
+  it('marks each expected failure as unavailable rather than a fault', async () => {
+    const cases: Array<[string, () => Promise<unknown>]> = [
+      [
+        'upstream status',
+        () => provider(respondWith('gone', { status: 404 })).fetchContent('https://e.com/x', { maxCharacters: 100 }),
+      ],
+      [
+        'refused URL',
+        () => provider(respondWith(articleHtml)).fetchContent('http://127.0.0.1/x', { maxCharacters: 100 }),
+      ],
+      [
+        'oversized body',
+        () =>
+          provider(respondWith(`<html><body><p>${'A'.repeat(5 * 1024 * 1024)}</p></body></html>`)).fetchContent(
+            'https://e.com/big',
+            { maxCharacters: 100 },
+          ),
+      ],
+    ]
+    for (const [label, run] of cases) {
+      let caught: unknown
+      try {
+        await run()
+      } catch (error) {
+        caught = error
+      }
+      expect((caught as Error).name, label).toBe('WebFetchUnavailableError')
+      expect((caught as Error).message.length, label).toBeGreaterThan(0)
+    }
   })
 })

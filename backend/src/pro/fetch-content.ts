@@ -4,7 +4,7 @@
 
 import { safeErrorHandler } from '@/middleware/error-handling'
 import { getWebFetchProvider } from '@/web/providers'
-import type { WebFetchProvider } from '@/web/types'
+import { WebFetchUnavailableError, type WebFetchProvider } from '@/web/types'
 import { Elysia, t } from 'elysia'
 import type { FetchContentResponse } from './types'
 
@@ -37,8 +37,26 @@ export const createFetchContentPlugin = (deps: FetchContentDeps = {}) =>
       const requestedMax = body.max_length ?? defaultMaxChars
       const maxCharacters = Math.min(Math.max(requestedMax, minChars), hardCap)
 
-      const page = await provider.fetchContent(body.url, { maxCharacters })
+      let page: Awaited<ReturnType<typeof provider.fetchContent>>
+      try {
+        page = await provider.fetchContent(body.url, { maxCharacters })
+      } catch (error) {
+        if (!(error instanceof WebFetchUnavailableError)) {
+          // A real fault. Let it reach `safeErrorHandler` as a 500 rather than
+          // dressing it up as a verdict about the page.
+          throw error
+        }
+        // Answered as 200 with `success: false`, not as a 5xx. Two reasons: the
+        // envelope already carries `success` and the client is written to throw on
+        // it, and a 5xx body is not reliably readable by the browser here (an edge
+        // can substitute its own response for an origin 5xx, which is how a clear
+        // message became a generic NetworkError while debugging this). The model
+        // gets the reason and can try another URL.
+        console.warn('[fetch-content] page unavailable:', error.message)
+        return { data: null, success: false, error: error.message }
+      }
       if (!page) {
+        // Reached, nothing to extract: a PDF, an image, an empty body.
         return { data: null, success: true }
       }
 

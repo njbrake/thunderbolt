@@ -217,3 +217,21 @@ describe('gateway-backed search, end to end through normalization', () => {
     })
   })
 })
+
+describe('perplexity-compatible max_results ceiling', () => {
+  // Our route clamps `limit` to 25 and the `search` tool's schema bounds nothing, so
+  // the model can ask for more than this shape accepts. otari validates
+  // `max_results` at 20 and answers 422, which would surface to the model as a
+  // failed search rather than as fewer results.
+  it('clamps a request above the shape ceiling of 20', async () => {
+    const { fetchFn, calls } = stubFetch({ results: [] })
+    await createPerplexityCompatibleSearchProvider({ baseUrl: 'https://g.example', fetchFn }).search('q', { limit: 25 })
+    expect(JSON.parse(String(calls[0].init.body)).max_results).toBe(20)
+  })
+
+  it('passes a request below the ceiling through untouched', async () => {
+    const { fetchFn, calls } = stubFetch({ results: [] })
+    await createPerplexityCompatibleSearchProvider({ baseUrl: 'https://g.example', fetchFn }).search('q', { limit: 7 })
+    expect(JSON.parse(String(calls[0].init.body)).max_results).toBe(7)
+  })
+})

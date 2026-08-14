@@ -4,6 +4,7 @@
 
 import { createExaFetchProvider } from '@/web/exa'
 import { createReadabilityFetchProvider } from '@/web/readability'
+import { WebFetchUnavailableError } from '@/web/types'
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { Elysia } from 'elysia'
 import { createFetchContentPlugin } from './fetch-content'
@@ -508,5 +509,70 @@ describe('Pro - fetch-content over the readability provider', () => {
 
     expect(data.isTruncated).toBe(true)
     expect(data.text).toContain('[Content truncated. Call fetch_content with max_length=2000 for more.]')
+  })
+})
+
+/**
+ * How an unreadable page reaches the model. Previously any provider failure became
+ * a sanitized 500, so a 404 and a genuine bug were indistinguishable and the reason
+ * reached nobody. A 5xx body is also not reliably readable by a browser here, since
+ * an edge can substitute its own response for an origin 5xx.
+ */
+describe('Pro - fetch-content failure reporting', () => {
+  const mountWith = (fetchContent: () => Promise<never>) =>
+    new Elysia().use(createFetchContentPlugin({ fetchProvider: { id: 'stub', fetchContent } }))
+
+  it('answers 200 with the reason when the page could not be read', async () => {
+    const app = mountWith(async () => {
+      throw new WebFetchUnavailableError('The page returned HTTP 404')
+    })
+    const response = await app.handle(
+      new Request('http://localhost/fetch-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/gone' }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      data: null,
+      success: false,
+      error: 'The page returned HTTP 404',
+    })
+  })
+
+  it('still answers 500 for a fault that is not a verdict about the page', async () => {
+    const app = mountWith(async () => {
+      throw new TypeError('undefined is not a function')
+    })
+    const response = await app.handle(
+      new Request('http://localhost/fetch-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/x' }),
+      }),
+    )
+
+    expect(response.status).toBe(500)
+    // Sanitized: a bug in the fetcher is not something to describe to a caller.
+    expect(await response.json()).toEqual({ success: false, data: null, error: 'Internal Server Error' })
+  })
+
+  it('keeps success true with a null result for a page that had nothing to extract', async () => {
+    // A PDF or an image. Reached, understood, nothing to return: not a failure.
+    const app = new Elysia().use(
+      createFetchContentPlugin({ fetchProvider: { id: 'stub', fetchContent: async () => null } }),
+    )
+    const response = await app.handle(
+      new Request('http://localhost/fetch-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/paper.pdf' }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ data: null, success: true })
   })
 })

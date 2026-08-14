@@ -43,6 +43,16 @@ export type HttpSearchConfig = {
 
 const defaultTimeoutMs = 10_000
 
+/**
+ * Ceiling the Perplexity-shaped contract validates `max_results` against, so a
+ * larger ask is a 422 from the backend rather than fewer results. Our own route
+ * clamps to 25 and the `search` tool's schema bounds nothing, so the model can ask
+ * for more than this; clamp here, where the shape's limit is known, rather than
+ * teaching every caller a backend's ceiling. mozilla-ai/otari validates
+ * `le=MAX_RESULTS_CAP` with the cap at 20.
+ */
+const perplexityCompatibleMaxResults = 20
+
 /** Non-2xx and transport failures both surface as this, so the route can say which
  *  upstream failed without leaking a body it has not validated. */
 export class WebSearchBackendError extends Error {
@@ -107,7 +117,7 @@ export const createPerplexityCompatibleSearchProvider = (config: HttpSearchConfi
           'Content-Type': 'application/json',
           ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
         },
-        body: JSON.stringify({ query, max_results: limit }),
+        body: JSON.stringify({ query, max_results: Math.min(limit, perplexityCompatibleMaxResults) }),
       },
       config,
     )

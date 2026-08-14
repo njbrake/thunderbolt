@@ -96,3 +96,19 @@ export type WebFetchProvider = {
   /** `null` when the provider reached the page but had nothing to return. */
   fetchContent(url: string, options: WebFetchOptions): Promise<WebPageContent | null>
 }
+
+/**
+ * A page the fetcher reached a verdict on and could not return: the upstream
+ * refused it, it was too large, it timed out, or its URL is one we will not fetch.
+ *
+ * Separate from an unexpected throw because the two want different handling. This
+ * one is an outcome the model should hear about in words, so it can try another URL
+ * rather than see an opaque failure; a genuine fault should stay a 500. The message
+ * is written to be safe to return: it names what happened, never an internal detail.
+ */
+export class WebFetchUnavailableError extends Error {
+  constructor(reason: string) {
+    super(reason)
+    this.name = 'WebFetchUnavailableError'
+  }
+}
