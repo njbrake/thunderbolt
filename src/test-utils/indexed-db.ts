@@ -22,15 +22,24 @@
 /** Present so `restoreIndexedDb` can tell "was absent" from "was something". */
 const absent = Symbol('absent')
 
-let previous: IDBFactory | typeof absent = absent
+/** Distinguishes "nothing snapshotted yet" from a snapshotted absence. */
+const unstubbed = Symbol('unstubbed')
+
+let previous: IDBFactory | typeof absent | typeof unstubbed = unstubbed
 
 /**
- * Installs a minimal always-succeeds `indexedDB`. `open()` resolves on a
- * microtask, mirroring a real browser closely enough for availability probes and
- * for key storage to get a handle.
+ * Installs a minimal `indexedDB` whose `open()` always succeeds on a microtask.
+ * That covers availability probes (`isIndexedDbAvailable`) and nothing more —
+ * the returned database has no `transaction`, so key-storage reads and writes
+ * fail loudly rather than hanging on an event this fake never fires. Extend it
+ * here, with a test, if a case genuinely needs a backing store.
+ *
+ * Nested calls keep the first snapshot, so a stub can never restore over a stub.
  */
 export const stubIndexedDb = (): void => {
-  previous = 'indexedDB' in globalThis ? globalThis.indexedDB : absent
+  if (previous === unstubbed) {
+    previous = 'indexedDB' in globalThis ? globalThis.indexedDB : absent
+  }
 
   const factory = {
     open: () => {
@@ -39,34 +48,7 @@ export const stubIndexedDb = (): void => {
         onerror: null as (() => void) | null,
         onupgradeneeded: null as (() => void) | null,
         onblocked: null as (() => void) | null,
-        result: {
-          close: () => {},
-          // Enough of a database for key-storage's read/write round trip to be
-          // driven without a real backing store.
-          objectStoreNames: { contains: () => true },
-          createObjectStore: () => ({}),
-          transaction: () => ({
-            objectStore: () => ({
-              get: () => {
-                const getRequest = {
-                  onsuccess: null as (() => void) | null,
-                  onerror: null as (() => void) | null,
-                  result: undefined as unknown,
-                }
-                queueMicrotask(() => getRequest.onsuccess?.())
-                return getRequest
-              },
-              put: () => {
-                const putRequest = {
-                  onsuccess: null as (() => void) | null,
-                  onerror: null as (() => void) | null,
-                }
-                queueMicrotask(() => putRequest.onsuccess?.())
-                return putRequest
-              },
-            }),
-          }),
-        },
+        result: { close: () => {} },
       }
       queueMicrotask(() => request.onsuccess?.())
       return request
@@ -79,9 +61,14 @@ export const stubIndexedDb = (): void => {
 
 /** Puts the global back exactly as it was — deleting it when it never existed. */
 export const restoreIndexedDb = (): void => {
-  if (previous === absent) {
+  const restored = previous
+  if (restored === unstubbed) {
+    return
+  }
+  previous = unstubbed
+  if (restored === absent) {
     Reflect.deleteProperty(globalThis, 'indexedDB')
     return
   }
-  Object.defineProperty(globalThis, 'indexedDB', { value: previous, configurable: true, writable: true })
+  Object.defineProperty(globalThis, 'indexedDB', { value: restored, configurable: true, writable: true })
 }
