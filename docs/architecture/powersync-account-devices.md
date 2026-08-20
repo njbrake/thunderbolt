@@ -22,15 +22,15 @@ For the sync data transformation middleware and custom SharedWorker (E2E encrypt
 
 - Every synced table must have a **`user_id`** column (sync rules and backend scope by `user_id`).
 - Define the table in **both**:
-  - Frontend: [src/db/tables.ts](../src/db/tables.ts) (SQLite)
-  - Backend: [backend/src/db/powersync-schema.ts](../backend/src/db/powersync-schema.ts) (PostgreSQL)
+  - Frontend: [src/db/tables.ts](../../src/db/tables.ts) (SQLite)
+  - Backend: [backend/src/db/powersync-schema.ts](../../backend/src/db/powersync-schema.ts) (PostgreSQL)
 - **Backend schema uses minimal indexes**: Only primary keys and `user_id` indexes (see [Indexes and Foreign Keys](#indexes-and-foreign-keys) below).
 
 ### Current Tables
 
-Defined in [shared/powersync-tables.ts](../shared/powersync-tables.ts):
+Defined in [shared/powersync-tables.ts](../../shared/powersync-tables.ts):
 
-`settings`, `chat_threads`, `chat_messages`, `tasks`, `models`, `prompts`, `skills`, `triggers`, `modes`, `model_profiles`, `devices`, `agents`.
+`settings`, `chat_threads`, `chat_messages`, `tasks`, `models`, `prompts`, `skills`, `triggers`, `model_profiles`, `devices`, `agents`, `projects`.
 
 ### Indexes and Foreign Keys
 
@@ -52,8 +52,8 @@ See [docs/composite-primary-keys-and-default-data.md](composite-primary-keys-and
 
 1. Create the table in both `src/db/tables.ts` and `backend/src/db/powersync-schema.ts` (include `user_id`).
 2. **Backend schema**: Add only a `user_id` index: `index('idx_[table]_user_id').on(table.userId)`. Do not add composite foreign keys or other indexes (see above).
-3. Register in [src/db/powersync/schema.ts](../src/db/powersync/schema.ts) (`drizzleSchema`).
-4. Add the table name and query keys in [shared/powersync-tables.ts](../../shared/powersync-tables.ts) (`powersyncTableNames` and `powersyncTableToQueryKeys`).
+3. Register in [src/db/powersync/schema.ts](../../src/db/powersync/schema.ts) (`drizzleSchema`).
+4. Add the table name and query keys in [shared/powersync-tables.ts](../../shared/powersync-tables.ts) (`powersyncTableNames` and `powersyncTableToQueryKeys`). The query-key entry is required by the map's type but has no runtime consumer — reactivity comes from PowerSync itself; see the note on the map.
 5. Update **all three** sync-rule configs so local, preview, prod, and enterprise-k8s stay in parity:
    - [powersync-service/config/config.yaml](../../powersync-service/config/config.yaml) — local docker-compose.
    - [deploy/config/powersync-config.yaml](../../deploy/config/powersync-config.yaml) — baked into the `ghcr.io/thunderbird/thunderbolt/thunderbolt-powersync` image; used by preview stacks (Pulumi) and prod on Render.
@@ -82,7 +82,7 @@ A new column on a `SELECT *` table (all current sync rules) carries the same sil
 
 ## 3. Local Development (PowerSync Docker)
 
-See [powersync-service/README.md](../powersync-service/README.md) for full steps. Summary:
+See [powersync-service/README.md](../../powersync-service/README.md) for full steps. Summary:
 
 - From the repo root: `make up` (or from `powersync-service/`: `docker compose up -d`)
 - PowerSync API: http://localhost:8080

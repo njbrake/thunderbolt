@@ -39,6 +39,25 @@ describe('powersync upload gate (applyOperation)', () => {
       const ok = await applyOperation(db, { op: 'PUT', type: 'not_a_table', id: 'x', data: { foo: 1 } }, userId)
       expect(ok).toBe(false)
     })
+
+    it('accepts-and-ignores a legacy (removed) table so an old client can drain its queue', async () => {
+      // A device with a queued write for a dropped table (modes, THU-739) must
+      // not wedge on a 400 retry loop. applyOperation returns true without touching the DB.
+      const ok = await applyOperation(db, { op: 'PUT', type: 'modes', id: 'legacy-1', data: { name: 'x' } }, userId)
+      expect(ok).toBe(true)
+    })
+
+    it('drains a queued project_files write, which never shipped but exists on branch devices', async () => {
+      // The table's migration was removed before merge, so it has no production
+      // history — but a device that ran the Projects branch can still hold writes
+      // for it, and an unknown table is a 400 the client retries forever.
+      const ok = await applyOperation(
+        db,
+        { op: 'PUT', type: 'project_files', id: 'pf-1', data: { filename: 'a.md', content: 'x' } },
+        userId,
+      )
+      expect(ok).toBe(true)
+    })
   })
 
   describe('DELETE allowlist (security: protected tables)', () => {

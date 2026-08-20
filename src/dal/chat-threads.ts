@@ -60,6 +60,8 @@ export const createChatThread = async (
   db: AnyDrizzleDatabase,
   data: Pick<ChatThread, 'contextSize' | 'id' | 'title' | 'triggeredBy' | 'wasTriggeredByAutomation'> & {
     agentId?: string | null
+    /** Owning project, when the chat was started from one. */
+    projectId?: string | null
   },
   model: Model,
 ): Promise<void> => {
@@ -77,10 +79,7 @@ export const updateChatThread = async (
   db: AnyDrizzleDatabase,
   id: string,
   data: Partial<
-    Pick<
-      ChatThread,
-      'acpSessionId' | 'agentId' | 'contextSize' | 'modeId' | 'title' | 'triggeredBy' | 'wasTriggeredByAutomation'
-    >
+    Pick<ChatThread, 'acpSessionId' | 'agentId' | 'contextSize' | 'title' | 'triggeredBy' | 'wasTriggeredByAutomation'>
   >,
 ): Promise<void> => {
   await db.update(chatThreadsTable).set(data).where(eq(chatThreadsTable.id, id))
@@ -112,6 +111,7 @@ export const getOrCreateChatThread = async (
   id: string,
   modelId: string,
   agentId: string | null = null,
+  projectId: string | null = null,
 ): Promise<ChatThread> => {
   const thread = await getChatThread(db, id)
 
@@ -133,6 +133,7 @@ export const getOrCreateChatThread = async (
       triggeredBy: null,
       wasTriggeredByAutomation: 0,
       agentId,
+      projectId,
     },
     model,
   )

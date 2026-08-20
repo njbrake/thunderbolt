@@ -50,7 +50,9 @@ export const encryptedColumnsMap: Readonly<Record<string, readonly string[]>> = 
     'nudge_search_retry',
     'provider_options',
   ],
-  modes: ['name', 'label', 'icon', 'system_prompt'],
   devices: ['name'],
   skills: ['name', 'label', 'description', 'instruction'],
+  // `icon` (a single emoji chosen from a fixed set) and `pinned_order` stay
+  // plaintext — neither carries user-authored content.
+  projects: ['name', 'description', 'instructions'],
 }

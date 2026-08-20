@@ -47,12 +47,12 @@ From [`shared/powersync-tables.ts`](../shared/powersync-tables.ts):
 | `chat_messages`  | Individual messages within threads                                | `id`             |
 | `tasks`          | Todo / task items (defaults seeded per user)                      | `(id, user_id)`  |
 | `models`         | Configured model profiles (defaults seeded per user)              | `(id, user_id)`  |
-| `modes`          | Custom conversational modes (defaults seeded per user)            | `(id, user_id)`  |
 | `prompts`        | Saved prompt templates (defaults seeded per user)                 | `(id, user_id)`  |
 | `model_profiles` | Per-model tuning (temperature, prompt overrides) seeded per user  | `(id, user_id)`  |
 | `mcp_servers`    | Registered Model Context Protocol servers                         | `id`             |
 | `triggers`       | Automations                                                       | `id`             |
 | `devices`        | Registered devices for the current account                        | `id`             |
+| `projects`       | Project workspaces (durable instructions)                         | `id`             |
 
 Default-data tables use composite primary keys so multiple users can hold the same default id — see [composite-primary-keys-and-default-data.md](./composite-primary-keys-and-default-data.md).
 
@@ -68,7 +68,8 @@ Adding a table touches both clients and the backend plus the PowerSync sync rule
 
 1. **Backend + sync rules PR**
    - Add the table to `backend/src/db/powersync-schema.ts` with a Drizzle migration.
-   - Register in [`shared/powersync-tables.ts`](../shared/powersync-tables.ts) (`powersyncTableNames` + `powersyncTableToQueryKeys`).
+   - Register in [`shared/powersync-tables.ts`](../shared/powersync-tables.ts) (`powersyncTableNames` + `powersyncTableToQueryKeys` — the latter is
+     type-required but has no runtime consumer; see the note on the map).
    - Add the sync rule to all three configs: `powersync-service/config/config.yaml`, `deploy/config/powersync-config.yaml`, and `deploy/k8s/templates/configmaps.yaml`.
    - Merge and deploy this first. On merge, CI publishes a new `ghcr.io/thunderbird/thunderbolt/thunderbolt-powersync` image; roll the Render `powersync` service to that new tag before PR 2 merges.
 
