@@ -26,7 +26,7 @@ const discoveryDocument = {
  */
 let tokenRequests = 0
 
-const stubbedFetch = async (input: RequestInfo | URL) => {
+const stubbedFetch = async (input: RequestInfo | URL): Promise<Response> => {
   const url = input instanceof Request ? input.url : input.toString()
   if (url.includes('/.well-known/openid-configuration')) {
     return new Response(JSON.stringify(discoveryDocument), {
@@ -49,7 +49,7 @@ describe('SSO callback state binding', () => {
   const savedOrigins = process.env.TRUSTED_ORIGINS
 
   beforeAll(() => {
-    globalThis.fetch = Object.assign(stubbedFetch, { preconnect: () => {} }) as unknown as typeof fetch
+    globalThis.fetch = Object.assign(stubbedFetch, { preconnect: fetch.preconnect })
     process.env.TRUSTED_ORIGINS = `${oidcIssuerUrl},${appUrl}`
     getSettingsSpy = spyOn(settingsModule, 'getSettings').mockReturnValue(
       createTestSettings({

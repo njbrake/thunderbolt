@@ -7,14 +7,23 @@ import { Button } from '@/components/ui/button'
 import { isSsoMode } from '@/lib/auth-mode'
 import { useSearchParams } from 'react-router'
 
-/** Codes that mean the flow went stale rather than that it can never succeed. */
-const staleFlowCodes = new Set([
+/**
+ * Codes worth retrying. `state_mismatch` is the one to read carefully: Better
+ * Auth sends it when the signed `state` cookie was missing or did not match,
+ * which covers both a sign-in that outlived the cookie's five-minute lifetime
+ * and a cross-site deployment that drops the cookie on every attempt. The copy
+ * has to leave room for the second case.
+ */
+const retryableCodes = new Set([
   'invalid_state',
   'please_restart_the_process',
   'state_mismatch',
   'state_not_found',
   'state_security_mismatch',
 ])
+
+/** Provider text is unbounded, so it is truncated before it reaches the page. */
+const maxProviderMessageLength = 200
 
 /**
  * Maps a Better Auth error code to copy that tells the user what to do next.
@@ -23,13 +32,25 @@ const staleFlowCodes = new Set([
  * description.
  */
 const describeAuthError = (code: string): string => {
-  if (staleFlowCodes.has(code)) {
-    return 'Your sign-in took too long to complete. Starting over usually fixes this.'
+  if (retryableCodes.has(code)) {
+    return 'Your sign-in did not finish in time, or this browser did not keep the sign-in cookie. Starting over usually fixes it. If it keeps happening, contact your administrator.'
   }
   if (code === 'account_not_linked') {
-    return 'This email is already registered with a different sign-in method. Ask your administrator to link the accounts.'
+    return 'This email is already registered with a different sign-in method. Sign in the way you did originally, or contact your administrator.'
   }
   return 'Sign-in could not be completed. If this keeps happening, contact your administrator.'
+}
+
+/**
+ * Normalizes the provider's `error_description`. Better Auth interpolates the
+ * value straight into the redirect, so a provider that sent no description
+ * arrives here as the literal string `undefined`.
+ */
+const readProviderMessage = (raw: string | null): string | null => {
+  if (!raw || raw === 'undefined') {
+    return null
+  }
+  return raw.slice(0, maxProviderMessageLength)
 }
 
 /**
@@ -43,7 +64,9 @@ const AuthError = () => {
   // Better Auth reports the code as `?error=` on most paths, but a missing state
   // parameter arrives as `?state=state_not_found`.
   const code = searchParams.get('error') || searchParams.get('state') || 'unknown_error'
-  const description = searchParams.get('error_description')
+  // Anyone can craft this URL, and the text is the identity provider's, not
+  // ours: attribute it so it never reads as a Thunderbolt instruction.
+  const providerMessage = readProviderMessage(searchParams.get('error_description'))
 
   return (
     <div className="flex h-dvh w-full flex-col items-center justify-center">
@@ -56,7 +79,11 @@ const AuthError = () => {
         <div className="flex flex-col items-center gap-2">
           <h1 className="text-4xl font-semibold tracking-tight">Sign-in failed</h1>
           <p className="text-muted-foreground">{describeAuthError(code)}</p>
-          {description && <p className="text-[length:var(--font-size-xs)] text-muted-foreground">{description}</p>}
+          {providerMessage && (
+            <p className="text-[length:var(--font-size-xs)] text-muted-foreground">
+              Your identity provider reported: “{providerMessage}”
+            </p>
+          )}
           <p className="text-[length:var(--font-size-xs)] text-muted-foreground">Error code: {code}</p>
         </div>
 

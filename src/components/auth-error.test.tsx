@@ -48,17 +48,20 @@ describe('AuthError', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 
-  it('explains a stale flow as retryable', () => {
-    renderAt('?error=state_security_mismatch')
+  it('explains a retryable failure without promising that a retry will work', () => {
+    // `state_mismatch` covers both a slow sign-in and a cross-site deployment
+    // that drops the cookie every time, so the copy has to name both.
+    renderAt('?error=state_mismatch')
 
-    expect(screen.getByText(/took too long to complete/)).toBeInTheDocument()
+    expect(screen.getByText(/did not finish in time/)).toBeInTheDocument()
+    expect(screen.getByText(/contact your administrator/)).toBeInTheDocument()
   })
 
   it('reads the code from the state param when there is no error param', () => {
     // Better Auth reports a missing state parameter as `?state=state_not_found`.
     renderAt('?state=state_not_found')
 
-    expect(screen.getByText(/took too long to complete/)).toBeInTheDocument()
+    expect(screen.getByText(/did not finish in time/)).toBeInTheDocument()
     expect(screen.getByText('Error code: state_not_found')).toBeInTheDocument()
   })
 
@@ -72,8 +75,24 @@ describe('AuthError', () => {
   it('shows the provider description alongside the code, not instead of it', () => {
     renderAt('?error=invalid_request&error_description=Client+not+registered')
 
-    expect(screen.getByText('Client not registered')).toBeInTheDocument()
+    // Attributed to the provider: the text is theirs (or a crafted URL's), and
+    // must never read as an instruction from Thunderbolt.
+    expect(screen.getByText(/Your identity provider reported/)).toHaveTextContent('Client not registered')
     expect(screen.getByText('Error code: invalid_request')).toBeInTheDocument()
+  })
+
+  it('ignores the literal "undefined" Better Auth sends when the provider gave no description', () => {
+    renderAt('?error=invalid_request&error_description=undefined')
+
+    expect(screen.queryByText(/Your identity provider reported/)).not.toBeInTheDocument()
+    expect(screen.getByText('Error code: invalid_request')).toBeInTheDocument()
+  })
+
+  it('truncates an oversized provider description', () => {
+    renderAt(`?error=invalid_request&error_description=${'x'.repeat(400)}`)
+
+    expect(screen.getByText(/Your identity provider reported/).textContent).toContain('x'.repeat(200))
+    expect(screen.getByText(/Your identity provider reported/).textContent).not.toContain('x'.repeat(201))
   })
 
   it('retries from a link the user chooses to click', () => {
