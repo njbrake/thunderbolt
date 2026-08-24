@@ -55,11 +55,25 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
-    # PowerSync's wa-sqlite wasm/worker assets, copied into public/@powersync by
-    # the `copy-powersync-assets` Vite plugin. Content-hashed filenames like
-    # `3322bc84de986b63c2cd.wasm`, so they are as immutable as /assets/ -- and they
-    # total ~17MB, which is worth not revalidating on every boot. Without this they
-    # fall through to `location /`, which sets no caching directives at all.
+    # PowerSync's wa-sqlite workers, copied into public/@powersync by the
+    # `copy-powersync-assets` Vite plugin. Unlike the wasm below, the .umd.js files
+    # (worker/WASQLiteDB.umd.js, worker/SharedSyncImplementation.umd.js,
+    # index.umd.js) have STABLE names and are loaded by fixed path in
+    # src/db/powersync/database.ts, so `immutable` would pin a client to an old
+    # worker across a @powersync/web upgrade -- the same stale-build problem the
+    # index.html block below fixes. Revalidate them like index.html; the common
+    # case stays a cheap 304. This regex overrides the prefix block below.
+    location ~ ^/@powersync/.*\.umd\.js$ {
+        include /etc/nginx/snippets/security-headers.conf;
+        # nosemgrep: generic.nginx.security.header-redefinition.header-redefinition
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # The wasm alongside those workers IS content-hashed (e.g.
+    # `3322bc84de986b63c2cd.wasm`), so it is as immutable as /assets/ -- roughly
+    # 10MB of servable content worth not revalidating on every boot (the larger
+    # on-disk figure includes .map files the rule below already 404s). Without this
+    # it falls through to `location /`, which sets no caching directives at all.
     location /@powersync/ {
         include /etc/nginx/snippets/security-headers.conf;
         expires 1y;
@@ -74,6 +88,19 @@ server {
     # The `/index.html` fallback below is a URI, so nginx does an internal redirect
     # and re-runs location matching: deep links like /settings land here too.
     location = /index.html {
+        include /etc/nginx/snippets/security-headers.conf;
+        # nosemgrep: generic.nginx.security.header-redefinition.header-redefinition
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # The OAuth callback is a standalone HTML entry document. Like index.html it
+    # should always reflect the latest deploy, so it revalidates (cheap 304)
+    # rather than being served from a stale cache. The remaining public/ statics
+    # (favicons, icons, capture-worklet.js) intentionally fall through to
+    # `location /`: they are not content-hashed, so `immutable` would be wrong,
+    # and the worklet is loaded by fixed path -- browser heuristic caching is the
+    # safe default there.
+    location = /oauth-callback.html {
         include /etc/nginx/snippets/security-headers.conf;
         # nosemgrep: generic.nginx.security.header-redefinition.header-redefinition
         add_header Cache-Control "no-cache" always;
