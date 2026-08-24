@@ -34,7 +34,9 @@ let previous: IDBFactory | typeof absent | typeof unstubbed = unstubbed
  * fail loudly rather than hanging on an event this fake never fires. Extend it
  * here, with a test, if a case genuinely needs a backing store.
  *
- * Nested calls keep the first snapshot, so a stub can never restore over a stub.
+ * Repeated calls keep the first snapshot and a single `restoreIndexedDb()` always
+ * puts the original back, so a stub can never be restored over a stub. These are
+ * not refcounted scopes: the first restore ends the stubbing for every caller.
  */
 export const stubIndexedDb = (): void => {
   if (previous === unstubbed) {
