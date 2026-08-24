@@ -9,7 +9,7 @@ import { eq, inArray, isNull } from 'drizzle-orm'
 import type { SQLiteTableWithColumns } from 'drizzle-orm/sqlite-core'
 import { v7 as uuidv7 } from 'uuid'
 import { modelProfilesTable, modelsTable, settingsTable, skillsTable, tasksTable } from '../db/tables'
-import { defaultModelProfiles, hashModelProfile } from '../defaults/model-profiles'
+import { buildGatewayModelProfile, defaultModelProfiles, hashModelProfile } from '../defaults/model-profiles'
 import { defaultModels, defaultModelsVersion, hashModel, type SharedModel } from '@shared/defaults/models'
 import { defaultSettings, defaultSettingsVersion, hashSetting } from '../defaults/settings'
 import { defaultSkills, defaultSkillsVersion, hashSkill, isWidgetSkillId } from '../defaults/skills'
@@ -394,9 +394,14 @@ export const cleanupRemovedDefaults = async (
   canOverwriteModels: boolean = true,
   models: readonly SharedModel[] = defaultModels,
   initialSyncCompleted: boolean = true,
+  protectedModelIds: ReadonlySet<string> = new Set(),
 ) => {
   const now = nowIso()
-  const currentModelIds = new Set(models.map((m) => m.id))
+  // Gateway model ids are added to the protected set so this version-gated
+  // sweep never soft-deletes a live gateway row (they're system rows absent
+  // from `defaultModels`); their own lifecycle is managed by
+  // `reconcileGatewayModelsPass`, which is not version-gated.
+  const currentModelIds = new Set([...models.map((m) => m.id), ...protectedModelIds])
 
   // One SELECT serves both loops: the system-model scan below and the
   // alive-model set used by the profile loop. Models soft-deleted in the scan
@@ -448,6 +453,115 @@ export type ReconcileDefaultsOverrides = {
    *  applied" — cloud may hold both the version marker and newer rows we
    *  haven't received yet. Defaults to true (tests / offline first-run). */
   initialSyncCompleted?: boolean
+  /** Inference-gateway models from `GET /config` (`defaults.gatewayModels`).
+   *  Reconciled to the current server state directly — not version-gated — with
+   *  a synthesized profile per row. Omitted/empty retires any previously-applied
+   *  gateway rows. */
+  gatewayModels?: readonly SharedModel[]
+}
+
+/**
+ * Settings key holding the JSON array of gateway model ids this account has
+ * applied. Not a version marker — it's the set-difference anchor that lets a
+ * later reconcile retire ids the deployment's gateway stopped serving, since
+ * gateway rows are otherwise indistinguishable from shipped `thunderbolt`
+ * system models in the DB.
+ */
+const gatewayModelsMarkerKey = 'gateway_models.applied_ids'
+
+const readAppliedGatewayIds = async (tx: AnyDrizzleDatabase): Promise<{ ids: string[]; exists: boolean }> => {
+  const rows = await tx.select().from(settingsTable).where(eq(settingsTable.key, gatewayModelsMarkerKey))
+  const row = rows[0]
+  if (!row?.value) {
+    return { ids: [], exists: !!row }
+  }
+  try {
+    const parsed = JSON.parse(row.value)
+    return {
+      ids: Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [],
+      exists: true,
+    }
+  } catch {
+    // Corrupt marker: treat as "nothing applied" so reconcile re-derives from
+    // the current server list rather than throwing during boot.
+    return { ids: [], exists: true }
+  }
+}
+
+const writeAppliedGatewayIds = async (tx: AnyDrizzleDatabase, ids: string[], exists: boolean): Promise<void> => {
+  const value = JSON.stringify(ids)
+  if (!exists) {
+    await tx.insert(settingsTable).values({ key: gatewayModelsMarkerKey, value })
+  } else {
+    await tx.update(settingsTable).set({ value }).where(eq(settingsTable.key, gatewayModelsMarkerKey))
+  }
+}
+
+/**
+ * Reconcile inference-gateway models to the current server list.
+ *
+ * Unlike the version-gated bundle passes, the server is authoritative for the
+ * live deployment catalogue, so this always writes: it inserts/updates the
+ * current rows (respecting user edits via the hash check in
+ * `reconcileDefaultsForTable`), synthesizes a profile per row to preserve the
+ * 1:1 invariant, and soft-deletes any id the applied-ids marker recorded but
+ * the server no longer serves (so a retired model leaves the picker instead of
+ * dangling as a route-not-found row). Returns the current id set so the caller
+ * can protect it from the version-gated bundle sweep.
+ *
+ * `canOverwrite` is always true (server-authoritative, not version-gated), but
+ * `canResurrect` follows `initialSyncCompleted` exactly as the bundle passes
+ * do: a mid-sync device must not un-delete a row a peer authoritatively retired
+ * (a synced soft-delete it may be seeing as partial delivery). Without this,
+ * the returning-boot fast path (`initialSyncCompleted: false`) would resurrect
+ * on a possibly-partial view of cloud state.
+ */
+const reconcileGatewayModelsPass = async (
+  tx: AnyDrizzleDatabase,
+  gatewayModels: readonly SharedModel[],
+  initialSyncCompleted: boolean,
+): Promise<Set<string>> => {
+  const currentIds = new Set(gatewayModels.map((m) => m.id))
+  const { ids: appliedIds, exists: markerExists } = await readAppliedGatewayIds(tx)
+
+  // Retire ids the gateway stopped serving. Soft-delete only — mirror the
+  // system-row cleanup elsewhere (a resurrected id re-inserts on the next
+  // reconcile). Profiles follow their parent model.
+  const removedIds = appliedIds.filter((id) => !currentIds.has(id))
+  if (removedIds.length > 0) {
+    const now = nowIso()
+    await tx.update(modelsTable).set({ deletedAt: now }).where(inArray(modelsTable.id, removedIds))
+    await tx.update(modelProfilesTable).set({ deletedAt: now }).where(inArray(modelProfilesTable.modelId, removedIds))
+  }
+
+  if (gatewayModels.length > 0) {
+    // `provider`/`isConfidential` are frozen for the same identity reasons as
+    // the bundle models pass; gateway rows never flip them, but freezing keeps
+    // the behaviour uniform. Server-authoritative, so `canOverwrite` is true.
+    await reconcileDefaultsForTable(tx, modelsTable, gatewayModels, hashModel, {
+      canOverwrite: true,
+      insertMissing: true,
+      canResurrect: initialSyncCompleted,
+      frozenFields: ['isConfidential', 'provider'],
+      metadataFields: ['description', 'vendor'],
+    })
+    const profiles = gatewayModels.map((m) => buildGatewayModelProfile(m.id))
+    await reconcileDefaultsForTable(tx, modelProfilesTable, profiles, hashModelProfile, {
+      keyField: 'modelId',
+      canOverwrite: true,
+      insertMissing: true,
+      canResurrect: initialSyncCompleted,
+    })
+  }
+
+  // Only touch the marker when the applied set actually changed, to avoid
+  // pointless synced writes on every boot.
+  const nextIds = [...currentIds]
+  const changed = removedIds.length > 0 || nextIds.some((id) => !appliedIds.includes(id))
+  if (changed || (markerExists && appliedIds.length !== nextIds.length)) {
+    await writeAppliedGatewayIds(tx, nextIds, markerExists)
+  }
+  return currentIds
 }
 
 export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: ReconcileDefaultsOverrides) => {
@@ -457,6 +571,8 @@ export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: Reco
     data: pickedModelsSource.data.map(normalizeOpusDefault),
   }
   const initialSyncCompleted = overrides?.initialSyncCompleted ?? true
+  const gatewayModels = overrides?.gatewayModels ?? []
+  const gatewayModelIds = new Set(gatewayModels.map((m) => m.id))
 
   await db.transaction(async (tx) => {
     // Snapshot every reconciled table's row existence up front. Doing this
@@ -511,7 +627,7 @@ export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: Reco
     // `modelsSource.data` overlaps with `defaultModels` by at least one id.
     // A fully-disjoint payload would otherwise let cleanup soft-delete every
     // bundle-known row (none appear in the passed-in `currentModelIds`).
-    await cleanupRemovedDefaults(tx, modelsGate.canOverwrite, modelsSource.data, initialSyncCompleted)
+    await cleanupRemovedDefaults(tx, modelsGate.canOverwrite, modelsSource.data, initialSyncCompleted, gatewayModelIds)
 
     // AI models. `canResurrect` uses initialSyncCompleted so an older-bundle
     // but fully-synced device can still un-delete a pre-THU-637 mistake, while
@@ -589,6 +705,12 @@ export const reconcileDefaults = async (db: AnyDrizzleDatabase, overrides?: Reco
     if (modelsGate.canOverwrite && (eitherPassMutated || bothPassesAtTarget) && droppedOtaModelIds.length === 0) {
       await advanceVersionMarker(tx, versionMarkerKeys.models, modelsSource.version, modelsGate.stored)
     }
+
+    // Inference-gateway models, reconciled to the current server list without a
+    // version gate (see `reconcileGatewayModelsPass`). Runs after the bundle
+    // model passes so it can resurrect/insert on top of a settled models table;
+    // its live ids were already protected from the bundle sweep above.
+    await reconcileGatewayModelsPass(tx, gatewayModels, initialSyncCompleted)
 
     // Tasks / skills / settings share the same shape: gate on the
     // per-table version + sync-incomplete guard, reconcile, advance marker

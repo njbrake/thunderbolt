@@ -61,6 +61,8 @@ type ServiceArgs = {
   }
   /** URL for the Thunderbolt inference gateway (env: THUNDERBOLT_INFERENCE_URL). Optional. */
   thunderboltInferenceUrl?: pulumi.Input<string>
+  /** Optional allowlist + labels for gateway models (env: THUNDERBOLT_INFERENCE_MODELS). */
+  thunderboltInferenceModels?: pulumi.Input<string>
   /** URL for the Tinfoil confidential-inference enclave (env: TINFOIL_ENCLAVE_URL). Optional. */
   tinfoilEnclaveUrl?: pulumi.Input<string>
   /**
@@ -504,6 +506,7 @@ export const createServices = (args: ServiceArgs) => {
           { name: 'POWERSYNC_JWT_KID', value: 'enterprise-powersync' },
           { name: 'RATE_LIMIT_ENABLED', value: 'true' },
           { name: 'THUNDERBOLT_INFERENCE_URL', value: args.thunderboltInferenceUrl ?? '' },
+          { name: 'THUNDERBOLT_INFERENCE_MODELS', value: args.thunderboltInferenceModels ?? '' },
           { name: 'TINFOIL_ENCLAVE_URL', value: args.tinfoilEnclaveUrl ?? '' },
           // Cloudflare terminates TLS for preview stacks — trust its CF-Connecting-IP
           // header for rate limiting. Enterprise stacks leave this unset (direct socket IP).

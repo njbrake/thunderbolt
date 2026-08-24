@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import type { Settings } from '@/config/settings'
+import { isBuiltInModel } from '@/inference/supported-models'
 import type { SharedModel } from '@shared/defaults/models'
 import { createHash } from 'node:crypto'
 
@@ -92,6 +93,13 @@ export type GatewaySettings = Pick<
  */
 const discoveryTtlMs = 5 * 60 * 1000
 
+/**
+ * Ceiling on the discovery request. `/config` and the chat route await discovery
+ * on a cold cache, so without a bound an unresponsive gateway would hold those
+ * backend requests until the transport times out (often tens of seconds).
+ */
+const discoveryTimeoutMs = 5 * 1000
+
 type DiscoveryCache = {
   url: string
   allowlist: string
@@ -101,13 +109,29 @@ type DiscoveryCache = {
 
 let cache: DiscoveryCache | null = null
 
+/**
+ * The in-flight refresh, if any, keyed by the settings that started it.
+ * Concurrent cold callers await the same promise instead of each firing their
+ * own request (and racing to overwrite the cache).
+ */
+let inFlight: { url: string; allowlist: string; promise: Promise<GatewayModelSpec[]> } | null = null
+
 /** Reset discovery state. Exported for tests. */
 export const clearGatewayModelCache = (): void => {
   cache = null
+  inFlight = null
 }
 
 /** Shape of the OpenAI-compatible `GET /models` payload we rely on. */
 type ModelsResponse = { data?: Array<{ id?: unknown }> }
+
+/**
+ * Outcome of a discovery attempt. `ok: false` means the gateway could not be
+ * reached or answered with an error — distinct from a reachable gateway that
+ * legitimately serves nothing (`ok: true, specs: []`). Callers use the
+ * distinction to avoid replacing a good catalogue with an empty one on a blip.
+ */
+type DiscoveryResult = { ok: true; specs: GatewayModelSpec[] } | { ok: false }
 
 /**
  * Ask the gateway what it serves.
@@ -116,12 +140,22 @@ type ModelsResponse = { data?: Array<{ id?: unknown }> }
  * catalogue the gateway already publishes. `THUNDERBOLT_INFERENCE_MODELS`
  * remains an optional allowlist plus label source, applied on top.
  *
- * Failures are swallowed to an empty list. A gateway that is down must not stop
- * the app from booting or serving its built-in models, and the next refresh
- * after the TTL picks it back up.
+ * Reachability failures resolve to `ok: false` rather than throwing. A gateway
+ * that is down must not stop the app from booting or serving its built-in
+ * models; the caller keeps the last good catalogue and retries after the TTL.
  */
-const discover = async (settings: GatewaySettings, fetchFn: typeof fetch): Promise<GatewayModelSpec[]> => {
-  const overrides = new Map(parseGatewayModelSpecs(settings.thunderboltInferenceModels).map((s) => [s.id, s.label]))
+const discover = async (settings: GatewaySettings, fetchFn: typeof fetch): Promise<DiscoveryResult> => {
+  const raw = settings.thunderboltInferenceModels
+  const overrides = new Map(parseGatewayModelSpecs(raw).map((s) => [s.id, s.label]))
+
+  // An allowlist that the operator set but that parses to nothing (all entries
+  // malformed) means "restrict", not "expose everything" — fail closed rather
+  // than silently publishing every model the gateway serves.
+  if (raw.trim().length > 0 && overrides.size === 0) {
+    console.warn('THUNDERBOLT_INFERENCE_MODELS is set but has no valid entries; exposing no gateway models.')
+    return { ok: true, specs: [] }
+  }
+
   // `thunderboltInferenceUrl` already includes the `/v1` prefix by convention.
   const url = `${settings.thunderboltInferenceUrl.replace(/\/$/, '')}/models`
 
@@ -130,10 +164,11 @@ const discover = async (settings: GatewaySettings, fetchFn: typeof fetch): Promi
       headers: settings.thunderboltInferenceApiKey
         ? { Authorization: `Bearer ${settings.thunderboltInferenceApiKey}` }
         : {},
+      signal: AbortSignal.timeout(discoveryTimeoutMs),
     })
     if (!response.ok) {
       console.warn(`Inference gateway model discovery failed: HTTP ${response.status}`)
-      return []
+      return { ok: false }
     }
     const body = (await response.json()) as ModelsResponse
     const ids = (body.data ?? []).map((entry) => entry?.id).filter((id): id is string => typeof id === 'string' && !!id)
@@ -141,16 +176,35 @@ const discover = async (settings: GatewaySettings, fetchFn: typeof fetch): Promi
     // A non-empty allowlist narrows discovery; an empty one accepts everything.
     const allowed = overrides.size > 0 ? ids.filter((id) => overrides.has(id)) : ids
     const seen = new Set<string>()
-    return allowed.flatMap((id) => (seen.has(id) ? [] : (seen.add(id), [{ id, label: overrides.get(id) || id }])))
+    const specs = allowed.flatMap((id) => {
+      if (seen.has(id)) {
+        return []
+      }
+      seen.add(id)
+      // A gateway id that collides with a built-in slug can never be routed to
+      // the gateway (the proxy resolves built-ins first), so publishing it as a
+      // separate picker row would send the request somewhere other than the row
+      // implies. Drop it and keep the built-in authoritative.
+      if (isBuiltInModel(id)) {
+        console.warn(`Inference gateway model "${id}" shadows a built-in model id; ignoring the gateway entry.`)
+        return []
+      }
+      return [{ id, label: overrides.get(id) || id }]
+    })
+    return { ok: true, specs }
   } catch (error) {
     console.warn('Inference gateway model discovery failed:', error)
-    return []
+    return { ok: false }
   }
 }
 
 /**
  * Refresh discovery if the cache is empty, stale, or was built for different
  * settings. Safe to await on any path: a warm cache makes it a no-op.
+ *
+ * A failed refresh keeps the last good catalogue (only its timestamp advances,
+ * so the next attempt waits out the TTL rather than hammering a down gateway).
+ * Concurrent cold callers share one request via `inFlight`.
  */
 export const ensureGatewayModels = async (
   settings: GatewaySettings,
@@ -163,24 +217,42 @@ export const ensureGatewayModels = async (
 
   const fetchFn = options.fetchFn ?? fetch
   const now = (options.nowFn ?? Date.now)()
+  const { thunderboltInferenceUrl: url, thunderboltInferenceModels: allowlist } = settings
   const fresh =
-    cache !== null &&
-    cache.url === settings.thunderboltInferenceUrl &&
-    cache.allowlist === settings.thunderboltInferenceModels &&
-    now - cache.fetchedAt < discoveryTtlMs
+    cache !== null && cache.url === url && cache.allowlist === allowlist && now - cache.fetchedAt < discoveryTtlMs
 
   if (fresh && cache) {
     return cache.specs
   }
 
-  const specs = await discover(settings, fetchFn)
-  cache = {
-    url: settings.thunderboltInferenceUrl,
-    allowlist: settings.thunderboltInferenceModels,
-    fetchedAt: now,
-    specs,
+  // Collapse concurrent cold refreshes for the same settings into one request.
+  if (inFlight && inFlight.url === url && inFlight.allowlist === allowlist) {
+    return inFlight.promise
   }
-  return specs
+
+  const promise = (async () => {
+    const result = await discover(settings, fetchFn)
+    const priorForSettings = cache && cache.url === url && cache.allowlist === allowlist ? cache : null
+    if (result.ok) {
+      cache = { url, allowlist, fetchedAt: now, specs: result.specs }
+    } else if (priorForSettings) {
+      // Serve the last good catalogue; just move the clock so we retry later.
+      cache = { ...priorForSettings, fetchedAt: now }
+    } else {
+      // Nothing good to fall back to; record the attempt so we honour the TTL.
+      cache = { url, allowlist, fetchedAt: now, specs: [] }
+    }
+    return cache.specs
+  })()
+
+  inFlight = { url, allowlist, promise }
+  try {
+    return await promise
+  } finally {
+    if (inFlight?.promise === promise) {
+      inFlight = null
+    }
+  }
 }
 
 /**

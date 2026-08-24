@@ -39,6 +39,8 @@ export type PerPrStackArgs = {
   betterAuthSecret: pulumi.Output<string>
   /** Optional thunderbolt inference URL — same value across all stacks today. */
   thunderboltInferenceUrl?: pulumi.Input<string>
+  /** Optional gateway model allowlist + labels — same value across all stacks today. */
+  thunderboltInferenceModels?: pulumi.Input<string>
   /** Optional Tinfoil enclave URL — same value across all stacks today. */
   tinfoilEnclaveUrl?: pulumi.Input<string>
 }
@@ -361,6 +363,7 @@ export const createPerPrStack = (args: PerPrStackArgs): PerPrStackOutputs => {
           { name: 'POWERSYNC_JWT_KID', value: 'enterprise-powersync' },
           { name: 'RATE_LIMIT_ENABLED', value: 'true' },
           { name: 'THUNDERBOLT_INFERENCE_URL', value: args.thunderboltInferenceUrl ?? '' },
+          { name: 'THUNDERBOLT_INFERENCE_MODELS', value: args.thunderboltInferenceModels ?? '' },
           { name: 'TINFOIL_ENCLAVE_URL', value: args.tinfoilEnclaveUrl ?? '' },
           { name: 'TRUSTED_PROXY', value: 'cloudflare' },
         ],

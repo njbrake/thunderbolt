@@ -129,6 +129,7 @@ if (isSharedStack) {
     shared: sharedOutputs,
     betterAuthSecret: betterAuthSecretInput,
     thunderboltInferenceUrl: config.get('thunderboltInferenceUrl'),
+    thunderboltInferenceModels: config.get('thunderboltInferenceModels'),
     tinfoilEnclaveUrl: config.get('tinfoilEnclaveUrl'),
   })
 
@@ -244,6 +245,8 @@ if (isSharedStack) {
 
   // Thunderbolt inference gateway URL (not a secret; set per-stack)
   const thunderboltInferenceUrl = config.get('thunderboltInferenceUrl') ?? ''
+  // Optional allowlist + labels for gateway models (not a secret; set per-stack)
+  const thunderboltInferenceModels = config.get('thunderboltInferenceModels') ?? ''
   // Tinfoil confidential-inference enclave URL (not a secret; set per-stack)
   const tinfoilEnclaveUrl = config.get('tinfoilEnclaveUrl') ?? ''
 
@@ -330,6 +333,7 @@ if (isSharedStack) {
       ghcrToken: config.getSecret('ghcrToken'),
       publicUrls,
       thunderboltInferenceUrl,
+      thunderboltInferenceModels,
       tinfoilEnclaveUrl,
       behindCloudflareProxy: hasSubdomainRouting,
       albListener: listener,

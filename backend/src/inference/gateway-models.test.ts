@@ -20,9 +20,13 @@ const configured = (models = '') =>
     thunderboltInferenceModels: models,
   })
 
-/** Stub of an OpenAI-compatible `GET /models` response. */
+/** Stub of an OpenAI-compatible `GET /models` response. Typed with fetch's
+ *  parameters so `.mock.calls` reports the requested URL and init. */
 const modelsResponse = (ids: string[]) =>
-  mock(async () => new Response(JSON.stringify({ object: 'list', data: ids.map((id) => ({ id })) }), { status: 200 }))
+  mock(
+    async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ object: 'list', data: ids.map((id) => ({ id })) }), { status: 200 }),
+  )
 
 beforeEach(() => {
   clearGatewayModelCache()
@@ -78,9 +82,9 @@ describe('ensureGatewayModels', () => {
     const fetchFn = modelsResponse(['a'])
     await ensureGatewayModels(configured(), { fetchFn: fetchFn as never })
 
-    const [url, init] = (fetchFn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]
+    const [url, init] = fetchFn.mock.calls[0]
     expect(url).toBe('https://gateway.example.com/v1/models')
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer key')
+    expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer key')
   })
 
   it('treats a configured list as an allowlist over discovery', async () => {
@@ -156,6 +160,64 @@ describe('ensureGatewayModels', () => {
 
     expect(fetchFn).toHaveBeenCalledTimes(2)
     expect(specs.map((s) => s.id)).toEqual(['b'])
+  })
+
+  // Distinguishing an all-invalid allowlist from "no allowlist" matters: an
+  // operator who set the variable meant to restrict, not to expose everything.
+  it('fails closed when a configured allowlist parses to nothing', async () => {
+    const fetchFn = modelsResponse(['a', 'b'])
+    const specs = await ensureGatewayModels(configured('=Orphan Label'), { fetchFn: fetchFn as never })
+
+    expect(specs).toEqual([])
+    // No point calling the gateway when nothing could be exposed anyway.
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('drops a gateway model whose id shadows a built-in slug', async () => {
+    const fetchFn = modelsResponse(['opus-5', 'llama-3.3-70b'])
+    const specs = await ensureGatewayModels(configured(), { fetchFn: fetchFn as never })
+
+    expect(specs.map((s) => s.id)).toEqual(['llama-3.3-70b'])
+  })
+
+  it('keeps the last good catalogue when a later refresh fails', async () => {
+    const settings = configured()
+    await ensureGatewayModels(settings, { fetchFn: modelsResponse(['a', 'b']) as never, nowFn: () => 0 })
+
+    const failing = mock(async () => new Response('down', { status: 503 }))
+    const specs = await ensureGatewayModels(settings, {
+      fetchFn: failing as never,
+      nowFn: () => 10 * 60 * 1000,
+    })
+
+    // A blip must not blank the picker; the previous discovery survives.
+    expect(specs.map((s) => s.id)).toEqual(['a', 'b'])
+  })
+
+  it('treats a reachable empty catalogue as empty, not a failure', async () => {
+    const settings = configured()
+    await ensureGatewayModels(settings, { fetchFn: modelsResponse(['a']) as never, nowFn: () => 0 })
+
+    const specs = await ensureGatewayModels(settings, {
+      fetchFn: modelsResponse([]) as never,
+      nowFn: () => 10 * 60 * 1000,
+    })
+
+    // The gateway answered and served nothing, so nothing is exposed.
+    expect(specs).toEqual([])
+  })
+
+  it('collapses concurrent cold refreshes into a single request', async () => {
+    const settings = configured()
+    const fetchFn = modelsResponse(['a'])
+    const [first, second] = await Promise.all([
+      ensureGatewayModels(settings, { fetchFn: fetchFn as never }),
+      ensureGatewayModels(settings, { fetchFn: fetchFn as never }),
+    ])
+
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(first.map((s) => s.id)).toEqual(['a'])
+    expect(second.map((s) => s.id)).toEqual(['a'])
   })
 })
 

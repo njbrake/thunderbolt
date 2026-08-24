@@ -335,7 +335,11 @@ const executeInitializationSteps = async (httpClient?: HttpClient): Promise<Hand
   // so both the returning-boot probe and reconcile see the same OTA payload).
   try {
     await time('step4_reconcile_defaults', () =>
-      reconcileDefaults(db, { models: modelsDefaults, initialSyncCompleted }),
+      reconcileDefaults(db, {
+        models: modelsDefaults,
+        gatewayModels: useConfigStore.getState().config.defaults?.gatewayModels,
+        initialSyncCompleted,
+      }),
     )
   } catch (error) {
     console.error('Failed to reconcile default settings:', error)

@@ -4,16 +4,23 @@
 
 import { beforeEach, describe, expect, it, mock } from 'bun:test'
 import { Elysia } from 'elysia'
-import { clearGatewayModelCache, ensureGatewayModels } from '@/inference/gateway-models'
+import { clearGatewayModelCache } from '@/inference/gateway-models'
 import { createTestSettings } from '@/test-utils/settings'
 import { defaultModels, defaultModelsVersion } from '@shared/defaults/models'
 import { createConfigRoutes } from './config'
 
-const fetchConfig = async (settings: Parameters<typeof createConfigRoutes>[0]) => {
-  const app = new Elysia().use(createConfigRoutes(settings))
+const fetchConfig = async (
+  settings: Parameters<typeof createConfigRoutes>[0],
+  options: Parameters<typeof createConfigRoutes>[1] = {},
+) => {
+  const app = new Elysia().use(createConfigRoutes(settings, options))
   const response = await app.handle(new Request('http://localhost/config'))
   return { status: response.status, body: await response.json() }
 }
+
+/** Stub of an OpenAI-compatible `GET /models` response. */
+const modelsResponse = (ids: string[]) =>
+  mock(async () => new Response(JSON.stringify({ data: ids.map((id) => ({ id })) }), { status: 200 }))
 
 describe('Config Routes', () => {
   beforeEach(() => {
@@ -64,37 +71,33 @@ describe('Config Routes', () => {
       const { body } = await fetchConfig(createTestSettings())
       expect(body.defaults.models.version).toBe(defaultModelsVersion)
       expect(body.defaults.models.data).toEqual(defaultModels)
+      expect(body.defaults.gatewayModels).toEqual([])
     })
 
     it('leaves models defaults untouched when no inference gateway is configured', async () => {
       const { body } = await fetchConfig(createTestSettings({ thunderboltInferenceModels: 'ignored' }))
       expect(body.defaults.models.version).toBe(defaultModelsVersion)
       expect(body.defaults.models.data).toEqual(defaultModels)
+      expect(body.defaults.gatewayModels).toEqual([])
     })
 
-    it('appends inference gateway models and out-versions the bundled defaults', async () => {
+    it('publishes gateway models in a separate, non-version-gated field', async () => {
       const settings = createTestSettings({
         thunderboltInferenceUrl: 'https://gateway.example.com/v1',
         thunderboltInferenceApiKey: 'key',
         thunderboltInferenceModels: 'llama-3.3-70b=Llama 3.3 70B',
       })
-      // Models are discovered from the gateway, so prime the cache with a stubbed
-      // /models response; the route then reads it without any network access.
-      await ensureGatewayModels(settings, {
-        fetchFn: mock(
-          async () => new Response(JSON.stringify({ data: [{ id: 'llama-3.3-70b' }] }), { status: 200 }),
-        ) as never,
-      })
-      const { body } = await fetchConfig(settings)
+      // Discovery runs through the route's own injected fetch — the route, not
+      // the test, exercises the `/models` call.
+      const { body } = await fetchConfig(settings, { fetchFn: modelsResponse(['llama-3.3-70b']) as never })
 
-      // A higher version is what makes the client prefer this payload over its
-      // bundled copy, and keeping the shipped defaults preserves the id overlap
-      // `pickDefaults` requires before it trusts the server.
-      expect(body.defaults.models.version).toBe(defaultModelsVersion + 1)
-      expect(body.defaults.models.data).toHaveLength(defaultModels.length + 1)
-      expect(body.defaults.models.data.slice(0, defaultModels.length)).toEqual(defaultModels)
+      // The version-gated models channel is untouched: gateway models no longer
+      // ride it (that hid them behind a synthetic version bump).
+      expect(body.defaults.models.version).toBe(defaultModelsVersion)
+      expect(body.defaults.models.data).toEqual(defaultModels)
 
-      const gatewayModel = body.defaults.models.data.at(-1)
+      expect(body.defaults.gatewayModels).toHaveLength(1)
+      const gatewayModel = body.defaults.gatewayModels[0]
       expect(gatewayModel.name).toBe('Llama 3.3 70B')
       expect(gatewayModel.model).toBe('llama-3.3-70b')
       expect(gatewayModel.provider).toBe('thunderbolt')

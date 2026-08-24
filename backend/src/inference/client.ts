@@ -264,9 +264,15 @@ const getAnthropicClient = (options: InferenceClientOptions = {}): OpenAI | Post
  * Get the self-hosted inference gateway client.
  *
  * Unlike the three hosted providers above, the base URL is operator-supplied
- * rather than hardcoded, so both the URL and the key are checked here. This is
- * the only place they are read, which is what keeps the gateway credential on
- * the server: the browser reaches these models through /v1/chat/completions.
+ * rather than hardcoded, so the URL is checked here. This is the only place the
+ * URL and key are read, which is what keeps the gateway credential on the
+ * server: the browser reaches these models through /v1/chat/completions.
+ *
+ * The key is optional: the self-hosting docs point at gateways like Ollama and
+ * llama.cpp that accept unauthenticated requests, and discovery already allows
+ * a keyless gateway, so the completion path must too. The OpenAI SDK requires a
+ * non-empty `apiKey` string, so an unauthenticated gateway gets a harmless
+ * placeholder; such gateways ignore the `Authorization` header it produces.
  */
 const getThunderboltInferenceClient = (options: InferenceClientOptions = {}): OpenAI | PostHogOpenAI => {
   const { fetchFn, logger, nowFn } = options
@@ -280,12 +286,8 @@ const getThunderboltInferenceClient = (options: InferenceClientOptions = {}): Op
     throw new Error('Thunderbolt inference URL not configured')
   }
 
-  if (!settings.thunderboltInferenceApiKey) {
-    throw new Error('Thunderbolt inference API key not configured')
-  }
-
   const params = {
-    apiKey: settings.thunderboltInferenceApiKey,
+    apiKey: settings.thunderboltInferenceApiKey || 'unused-gateway-key',
     baseURL: settings.thunderboltInferenceUrl,
     fetch: createInferenceFetch({ provider: 'thunderbolt-inference', fetchFn, logger, nowFn }),
   }

@@ -13,42 +13,43 @@ import { Elysia } from 'elysia'
  * (no auth, fetched at boot). The frontend mirrors this into its config store and
  * falls back to the cached value when offline (standalone mode keeps working).
  *
- * `defaults` ships the reconciled default sets (models today, more to follow) as
- * an OTA channel: clients pick between the server payload and their bundled copy
- * by comparing versions, so shipped defaults changes don't require a client
+ * `defaults.models` ships the reconciled default sets as a version-gated OTA
+ * channel: clients pick between the server payload and their bundled copy by
+ * comparing versions, so shipped defaults changes don't require a client
  * release. See "Reconciled defaults and version bumps" in AGENTS.md.
- */
-/**
- * Shipped defaults plus any inference-gateway models this deployment configured.
  *
- * When the gateway adds models the payload has to out-version the client's
- * bundled copy, or `pickDefaults` keeps the bundle and the extra models never
- * appear in the picker. Bumping by one preserves that comparison across future
- * upstream bumps, and appending (rather than replacing) keeps the id overlap
- * `pickDefaults` requires before it will trust a server payload.
+ * `defaults.gatewayModels` is deliberately separate and *not* version-gated.
+ * Inference-gateway models are discovered per deployment and change whenever the
+ * operator's gateway does, so folding them into the version-gated `models`
+ * channel would (a) require a synthetic version bump that then freezes out every
+ * later catalogue change, and (b) never reach the picker at all, since the
+ * frontend reconciler drops OTA model ids that lack a bundled profile. The
+ * frontend reconciles this list to the current server state directly and
+ * synthesizes a profile for each row.
  */
-const buildModelDefaults = async (settings: Settings) => {
-  // Refresh discovery here rather than at boot: /config is fetched on every app
-  // start, so the catalogue is picked up without a redeploy, and a warm cache
-  // makes this a no-op.
-  await ensureGatewayModels(settings)
-  const gatewayModels = getGatewaySharedModels(settings)
-  if (gatewayModels.length === 0) {
-    return { version: defaultModelsVersion, data: defaultModels }
-  }
-  return { version: defaultModelsVersion + 1, data: [...defaultModels, ...gatewayModels] }
+export type CreateConfigRoutesOptions = {
+  /** Injected fetch for gateway discovery. Omitted in production (global fetch);
+   *  supplied by tests so the route's own discovery call is exercised. */
+  fetchFn?: typeof fetch
 }
 
-export const createConfigRoutes = (settings: Settings) =>
-  new Elysia({ prefix: '/config' }).onError(safeErrorHandler).get('/', async () => ({
-    e2eeEnabled: settings.e2eeEnabled,
-    // Inverted so the env reads as an opt-in switch ("disable") while the wire
-    // contract reads as a positive capability ("enabled").
-    builtInAgentEnabled: !settings.disableBuiltInAgent,
-    allowCustomAgents: settings.allowCustomAgents,
-    // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
-    minAppVersion: settings.minAppVersion || undefined,
-    defaults: {
-      models: await buildModelDefaults(settings),
-    },
-  }))
+export const createConfigRoutes = (settings: Settings, options: CreateConfigRoutesOptions = {}) =>
+  new Elysia({ prefix: '/config' }).onError(safeErrorHandler).get('/', async () => {
+    // Refresh discovery here rather than at boot: /config is fetched on every app
+    // start, so the catalogue is picked up without a redeploy, and a warm cache
+    // makes this a no-op.
+    await ensureGatewayModels(settings, { fetchFn: options.fetchFn })
+    return {
+      e2eeEnabled: settings.e2eeEnabled,
+      // Inverted so the env reads as an opt-in switch ("disable") while the wire
+      // contract reads as a positive capability ("enabled").
+      builtInAgentEnabled: !settings.disableBuiltInAgent,
+      allowCustomAgents: settings.allowCustomAgents,
+      // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
+      minAppVersion: settings.minAppVersion || undefined,
+      defaults: {
+        models: { version: defaultModelsVersion, data: defaultModels },
+        gatewayModels: getGatewaySharedModels(settings),
+      },
+    }
+  })

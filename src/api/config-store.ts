@@ -24,6 +24,12 @@ export type AppConfig = {
       version: number
       data: SharedModel[]
     }
+    /** Inference-gateway models discovered for this deployment. Deliberately
+     *  outside the version-gated `models` channel: the list changes with the
+     *  operator's gateway, so the client reconciles it to the current server
+     *  state directly (synthesizing a profile per row) rather than gating on a
+     *  version. Absent/empty means no gateway models. */
+    gatewayModels?: SharedModel[]
   }
 }
 

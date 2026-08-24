@@ -113,6 +113,8 @@ spec:
               value: {{ .Values.backend.env.rateLimitEnabled | quote }}
             - name: THUNDERBOLT_INFERENCE_URL
               value: {{ .Values.backend.env.thunderboltInferenceUrl | default "" | quote }}
+            - name: THUNDERBOLT_INFERENCE_MODELS
+              value: {{ .Values.backend.env.thunderboltInferenceModels | default "" | quote }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

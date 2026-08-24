@@ -67,6 +67,9 @@ backend:
     rateLimitEnabled: "false"
     # -- Thunderbolt inference gateway URL (plaintext; empty disables the provider)
     thunderboltInferenceUrl: ""
+    # -- Optional allowlist + labels for gateway models (plaintext, comma-separated
+    # `id` or `id=Label`). Empty exposes every model the gateway advertises.
+    thunderboltInferenceModels: ""
   # -- Base64-encoded AI provider keys. Empty defaults disable each provider
   # (backend zod schema treats empty string as "not configured").
   # Generate each with: echo -n "<your-key>" | base64

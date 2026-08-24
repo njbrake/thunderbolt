@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 export {
+  buildGatewayModelProfile,
   defaultModelProfileDeepseekV4Flash,
   defaultModelProfileGlm52,
   defaultModelProfileOpus5,

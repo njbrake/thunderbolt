@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { deleteModel, getAllModels } from '@/dal'
+import { deleteModel, getAllModels, getAvailableModels, getModelProfile } from '@/dal'
 import { resetTestDatabase, setupTestDatabase, teardownTestDatabase } from '@/dal/test-utils'
 import { getDb } from '@/db/database'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -11,7 +11,12 @@ import type { AnyColumn } from 'drizzle-orm'
 import type { AnySQLiteTable } from 'drizzle-orm/sqlite-core'
 import { modelProfilesTable, modelsTable, promptsTable, settingsTable, skillsTable, tasksTable } from '../db/tables'
 import { defaultAutomations, hashPrompt } from '../defaults/automations'
-import { defaultModelProfileOpus5, defaultModelProfiles, hashModelProfile } from '../defaults/model-profiles'
+import {
+  buildGatewayModelProfile,
+  defaultModelProfileOpus5,
+  defaultModelProfiles,
+  hashModelProfile,
+} from '../defaults/model-profiles'
 import {
   defaultModelGlm52,
   defaultModelOpus5,
@@ -1917,5 +1922,167 @@ describe('reconcileDefaults per-table version gates (THU-677)', () => {
       expect(row).toBeDefined()
     }
     expect(await readStoredVersion('defaults_version.settings')).toBe(defaultSettingsVersion)
+  })
+})
+
+describe('reconcileGatewayModels', () => {
+  const gwId = '019af0aa-0000-7000-8000-000000000001'
+  const gwId2 = '019af0aa-0000-7000-8000-000000000002'
+  const gatewayMarkerKey = 'gateway_models.applied_ids'
+
+  const buildGatewayModel = (id: string, overrides: Partial<SharedModel> = {}): SharedModel => ({
+    id,
+    name: id,
+    provider: 'thunderbolt',
+    model: id,
+    url: null,
+    isSystem: 1,
+    enabled: 1,
+    toolUsage: 1,
+    isConfidential: 0,
+    startWithReasoning: 0,
+    supportsParallelToolCalls: 0,
+    contextWindow: null,
+    deletedAt: null,
+    defaultHash: null,
+    vendor: null,
+    description: "Served by this deployment's inference gateway",
+    userId: null,
+    ...overrides,
+  })
+
+  const readMarker = async () => {
+    const row = await getDb().select().from(settingsTable).where(eq(settingsTable.key, gatewayMarkerKey)).get()
+    return row?.value == null ? null : (JSON.parse(row.value) as string[])
+  }
+
+  test('inserts a gateway model with a synthesized profile and records the marker', async () => {
+    const db = getDb()
+    await reconcileDefaults(db, {
+      gatewayModels: [buildGatewayModel(gwId, { name: 'Llama 3.3 70B', model: 'llama-3.3-70b' })],
+    })
+
+    const modelRow = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId)).get()
+    expect(modelRow?.name).toBe('Llama 3.3 70B')
+    expect(modelRow?.provider).toBe('thunderbolt')
+    expect(modelRow?.deletedAt).toBeNull()
+
+    // A synthesized profile preserves the 1:1 model↔profile invariant.
+    const profileRow = await db.select().from(modelProfilesTable).where(eq(modelProfilesTable.modelId, gwId)).get()
+    expect(profileRow).toBeDefined()
+    expect(profileRow?.defaultHash).toBe(hashModelProfile(buildGatewayModelProfile(gwId)))
+
+    expect(await readMarker()).toEqual([gwId])
+  })
+
+  test('does not ride the version-gated models channel', async () => {
+    const db = getDb()
+    await reconcileDefaults(db, { gatewayModels: [buildGatewayModel(gwId)] })
+
+    // The models version marker reflects the bundle version, not a synthetic
+    // bump — gateway models are published out-of-band.
+    const marker = await db.select().from(settingsTable).where(eq(settingsTable.key, versionMarkerKeys.models)).get()
+    expect(Number(marker?.value)).toBe(defaultModelsVersion)
+  })
+
+  test('retires a gateway model the server stopped serving', async () => {
+    const db = getDb()
+    await reconcileDefaults(db, { gatewayModels: [buildGatewayModel(gwId), buildGatewayModel(gwId2)] })
+    // Next boot: the gateway only serves the first id.
+    await reconcileDefaults(db, { gatewayModels: [buildGatewayModel(gwId)] })
+
+    const kept = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId)).get()
+    expect(kept?.deletedAt).toBeNull()
+
+    const retired = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId2)).get()
+    expect(retired?.deletedAt).not.toBeNull()
+    const retiredProfile = await db.select().from(modelProfilesTable).where(eq(modelProfilesTable.modelId, gwId2)).get()
+    expect(retiredProfile?.deletedAt).not.toBeNull()
+
+    expect(await readMarker()).toEqual([gwId])
+  })
+
+  test('an empty gateway list retires everything previously applied', async () => {
+    const db = getDb()
+    await reconcileDefaults(db, { gatewayModels: [buildGatewayModel(gwId)] })
+    await reconcileDefaults(db, { gatewayModels: [] })
+
+    const row = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId)).get()
+    expect(row?.deletedAt).not.toBeNull()
+    expect(await readMarker()).toEqual([])
+  })
+
+  test('bundle cleanup does not sweep a live gateway model when the models gate reopens', async () => {
+    const db = getDb()
+    const gateway = buildGatewayModel(gwId)
+    await reconcileDefaults(db, { gatewayModels: [gateway] })
+
+    // A later boot bumps the bundle models version (reopening the version gate,
+    // so `cleanupRemovedDefaults` runs) while the gateway still serves the model.
+    // The gateway row must survive the sweep.
+    await reconcileDefaults(db, {
+      models: { version: defaultModelsVersion + 1, data: defaultModels },
+      gatewayModels: [gateway],
+    })
+
+    const gw = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId)).get()
+    expect(gw?.deletedAt).toBeNull()
+
+    // And the bundle models are all still intact.
+    for (const m of defaultModels) {
+      const row = await db.select().from(modelsTable).where(eq(modelsTable.id, m.id)).get()
+      expect(row?.deletedAt ?? null).toBeNull()
+    }
+  })
+
+  test('leaves gateway rows untouched when no gateway models are configured', async () => {
+    const db = getDb()
+    await reconcileDefaults(db)
+    expect(await readMarker()).toBeNull()
+  })
+
+  test('does not resurrect a peer-retired gateway row mid-sync, but does once synced', async () => {
+    const db = getDb()
+    const gateway = buildGatewayModel(gwId)
+    await reconcileDefaults(db, { gatewayModels: [gateway] })
+
+    // Simulate a peer's authoritative retirement arriving via sync: a
+    // cleanup-shaped soft-delete (only deletedAt set, defaultHash preserved).
+    const now = new Date().toISOString()
+    await db.update(modelsTable).set({ deletedAt: now }).where(eq(modelsTable.id, gwId))
+
+    // Server still lists the model, but we're mid-sync — must NOT resurrect on a
+    // possibly-partial view of cloud state.
+    await reconcileDefaults(db, { gatewayModels: [gateway], initialSyncCompleted: false })
+    let row = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId)).get()
+    expect(row?.deletedAt).not.toBeNull()
+
+    // Once sync has settled, the server-authoritative list wins and it comes back.
+    await reconcileDefaults(db, { gatewayModels: [gateway], initialSyncCompleted: true })
+    row = await db.select().from(modelsTable).where(eq(modelsTable.id, gwId)).get()
+    expect(row?.deletedAt).toBeNull()
+  })
+
+  // The direct rebuttal to review comment #1 ("these models never reach the
+  // database or picker"): drive the real picker DAL, not just a row probe.
+  test('a discovered gateway model is returned by the picker DAL with a usable profile', async () => {
+    const db = getDb()
+    await reconcileDefaults(db, {
+      gatewayModels: [buildGatewayModel(gwId, { name: 'Llama 3.3 70B', model: 'llama-3.3-70b' })],
+    })
+
+    const available = await getAvailableModels(db)
+    const picked = available.find((m) => m.id === gwId)
+    expect(picked).toBeDefined()
+    expect(picked?.name).toBe('Llama 3.3 70B')
+    expect(picked?.provider).toBe('thunderbolt')
+    // url null + provider thunderbolt is the "route through this backend" contract.
+    expect(picked?.url).toBeNull()
+
+    // A profile must exist or the model is a runtime hazard (getModelProfile is
+    // consulted on every inference call for this model).
+    const profile = await getModelProfile(db, gwId)
+    expect(profile).not.toBeNull()
+    expect(profile?.maxSteps).toBe(buildGatewayModelProfile(gwId).maxSteps)
   })
 })

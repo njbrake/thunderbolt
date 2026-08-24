@@ -47,3 +47,38 @@ export const defaultModelProfiles: ReadonlyArray<ModelProfile> = [
   defaultModelProfileDeepseekV4Flash,
   defaultModelProfileGlm52,
 ] as const
+
+/**
+ * Synthesize a profile for an inference-gateway model.
+ *
+ * Gateway model ids are discovered at runtime, so no static profile can ship
+ * for them — yet the 1:1 model↔profile invariant still has to hold for the row
+ * to be usable. This supplies conservative defaults (identical in spirit to the
+ * bundled hosted profiles: no temperature override, a sane step/attempt budget,
+ * no mode addenda or nudges) keyed to the discovered `modelId`.
+ */
+export const buildGatewayModelProfile = (modelId: string): ModelProfile => ({
+  modelId,
+  temperature: null,
+  maxSteps: 20,
+  maxAttempts: 2,
+  nudgeThreshold: 6,
+  useSystemMessageModeDeveloper: 0,
+  providerOptions: null,
+  toolsOverride: null,
+  linkPreviewsOverride: null,
+  chatModeAddendum: null,
+  searchModeAddendum: null,
+  researchModeAddendum: null,
+  citationReinforcementEnabled: 0,
+  citationReinforcementPrompt: null,
+  nudgeFinalStep: null,
+  nudgePreventive: null,
+  nudgeRetry: null,
+  nudgeSearchFinalStep: null,
+  nudgeSearchPreventive: null,
+  nudgeSearchRetry: null,
+  deletedAt: null,
+  defaultHash: null,
+  userId: null,
+})

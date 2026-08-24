@@ -7,6 +7,7 @@ import { createAuthMacro } from '@/auth/elysia-plugin'
 import { getSettings } from '@/config/settings'
 import { classifyInferenceError } from '@/inference/error-kind'
 import { ensureGatewayModels, isGatewayModel } from '@/inference/gateway-models'
+import { supportedModels, type ModelConfig } from '@/inference/supported-models'
 import { getErrorStatus, safeErrorHandler } from '@/middleware/error-handling'
 import { captureInferenceError, isPostHogConfigured } from '@/posthog/client'
 import { createSSEStreamFromCompletion } from '@/utils/streaming'
@@ -34,24 +35,10 @@ const serverTimingHeader = 'Server-Timing'
 const sanitizeMessageRoles = (messages: Message[]): Message[] =>
   messages.map((msg, i) => (i > 0 && privilegedRoles.has(msg.role) ? { ...msg, role: 'user' } : msg))
 
-type ModelConfig = {
-  provider: InferenceProvider
-  internalName: string
-  /** Whether to omit `temperature` from the upstream payload. */
-  omitTemperature?: boolean
-}
-
-export const supportedModels: Record<string, ModelConfig> = {
-  'opus-5': {
-    provider: 'anthropic',
-    internalName: 'claude-opus-5',
-    omitTemperature: true,
-  },
-  'deepseek-v4-flash': {
-    provider: 'fireworks',
-    internalName: 'accounts/fireworks/models/deepseek-v4-flash',
-  },
-}
+// Re-exported for callers/tests that import the built-in table from here; the
+// canonical definition lives in `supported-models.ts` to break the discovery
+// import cycle.
+export { supportedModels } from '@/inference/supported-models'
 
 export type InferenceProxyLatencyLog = {
   event: 'inference_proxy_latency'
@@ -134,7 +121,10 @@ export const createInferenceRoutes = (options: CreateInferenceRoutesOptions) => 
       // never awaits the network. Warm cache makes this a no-op anyway.
       const settings = getSettings()
       if (!supportedModels[body.model]) {
-        await ensureGatewayModels(settings)
+        // Reuse the route's injected fetch so discovery stays inside the same
+        // test seam as the completion call, rather than falling back to global
+        // fetch here.
+        await ensureGatewayModels(settings, { fetchFn })
       }
       const modelConfig =
         supportedModels[body.model] ??
