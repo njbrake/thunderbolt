@@ -21,20 +21,13 @@
  * appended and made active alongside the coding tools.
  */
 
-import {
-  AgentHarness,
-  InMemorySessionRepo,
-  type AgentHarnessOptions,
-  type AgentTool,
-  type ThinkingLevel,
-} from '@earendil-works/pi-agent-core'
-import { buildAnthropicModel, type AgentFetch } from './anthropic-model.ts'
-import { buildOpenAiCompatModel } from './openai-compat-model.ts'
+import type { AgentHarness, AgentHarnessOptions, AgentTool, ThinkingLevel } from '@earendil-works/pi-agent-core'
+import { buildHarness, type PiModelDescriptor } from './build-harness.ts'
 import { BrowserExecutionEnv } from './browser-env/browser-execution-env.ts'
 import { mountAgentFs } from './browser-env/mount.ts'
 import { createBrowserCodingTools } from './coding-tools/index.ts'
 import { ensureBufferPolyfill } from './ensure-buffer.ts'
-import { buildSeedMessages, type SeedTurn } from './seed-history.ts'
+import type { SeedTurn } from './seed-history.ts'
 
 /** Mount-relative root under which every thread carves its isolated workspace. */
 const workspaceRoot = '/workspace'
@@ -58,46 +51,9 @@ export const workspaceDirFor = (threadId: string): string => {
   return `${workspaceRoot}/${threadId}`
 }
 
-/**
- * The model the harness runs, tagged by Pi engine family. Both variants route
- * their LLM HTTP through an injected `fetch` (the app's proxy / SSO fetch):
- *
- *   - `anthropic` resolves a model from Pi's built-in catalog and wires the
- *     `@anthropic-ai/sdk` client through `fetch` ({@link buildAnthropicModel}).
- *   - `openai-compat` synthesizes an `openai-completions` model for the app's
- *     OpenAI-wire providers (`openai`/`custom`/`openrouter`/`thunderbolt`) and
- *     injects `fetch` around client construction ({@link buildOpenAiCompatModel}).
- */
-export type PiModelDescriptor =
-  | {
-      readonly kind: 'anthropic'
-      /** Anthropic model id to resolve from Pi's catalog, e.g. `claude-opus-4-8`. */
-      readonly modelId: string
-      /** Anthropic API key (HTTP still flows through `fetch`). */
-      readonly apiKey: string
-      /** Fetch every request is routed through — the app's proxy fetch. */
-      readonly fetch: AgentFetch
-    }
-  | {
-      readonly kind: 'openai-compat'
-      /** App provider name, also used as the Pi provider id. */
-      readonly providerId: string
-      /** Upstream model id sent on the wire. */
-      readonly modelId: string
-      /** OpenAI-compatible base URL. */
-      readonly baseURL: string
-      /** Bearer key for the OpenAI SDK (placeholder when `fetch` supplies auth). */
-      readonly apiKey: string
-      /** Provider-specific app fetch (proxy fetch, or thunderbolt SSO fetch). */
-      readonly fetch: AgentFetch
-      /** Whether to request a reasoning effort (else Pi sends none). */
-      readonly reasoning: boolean
-      /** Optional upstream context window. */
-      readonly contextWindow?: number
-      /** Whether the model accepts image input; drives the synthetic descriptor's
-       *  input modalities (text-only strips images before the wire). */
-      readonly supportsImages: boolean
-    }
+// `PiModelDescriptor` moved to `build-harness.ts` with the assembly that reads
+// it. Re-exported here so existing importers are unaffected by the split.
+export type { PiModelDescriptor } from './build-harness.ts'
 
 /** Inputs for {@link buildAppHarness}. */
 export type BuildAppHarnessOptions = {
@@ -137,44 +93,13 @@ export const buildAppHarness = async (options: BuildAppHarnessOptions): Promise<
   if (!created.ok) {
     throw created.error
   }
-  const session = await new InMemorySessionRepo().create({})
-  const { models, model } =
-    options.model.kind === 'anthropic'
-      ? buildAnthropicModel({
-          apiKey: options.model.apiKey,
-          fetch: options.model.fetch,
-          modelId: options.model.modelId,
-        })
-      : buildOpenAiCompatModel({
-          providerId: options.model.providerId,
-          modelId: options.model.modelId,
-          baseURL: options.model.baseURL,
-          apiKey: options.model.apiKey,
-          fetch: options.model.fetch,
-          reasoning: options.model.reasoning,
-          contextWindow: options.model.contextWindow,
-          supportsImages: options.model.supportsImages,
-        })
 
-  const tools: AgentTool[] = [...createBrowserCodingTools(env, { cwd: workspaceDir }), ...(options.tools ?? [])]
-
-  const harness = new AgentHarness({
-    env,
-    session,
-    models,
-    model,
-    tools,
-    activeToolNames: tools.map((tool) => tool.name),
-    thinkingLevel: options.thinkingLevel,
+  return buildHarness({
+    model: options.model,
     systemPrompt: options.systemPrompt,
+    thinkingLevel: options.thinkingLevel,
+    env,
+    tools: [...createBrowserCodingTools(env, { cwd: workspaceDir }), ...(options.tools ?? [])],
+    history: options.history,
   })
-
-  // Seed prior turns into the (idle) session so the first prompt runs with full
-  // conversational context. `appendMessage` writes straight to the session while
-  // idle; `prompt` then reads them back via `session.buildContext()`.
-  for (const message of buildSeedMessages(options.history)) {
-    await harness.appendMessage(message)
-  }
-
-  return harness
 }

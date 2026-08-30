@@ -24,7 +24,12 @@
     "../shared/proxy-protocol.ts",
     "../shared/url.ts",
     "../shared/ws-bearer.ts",
-    "../shared/types/auth.ts"
+    "../shared/types/auth.ts",
+    "../shared/agent-core/build-harness.ts",
+    "../shared/agent-core/anthropic-model.ts",
+    "../shared/agent-core/openai-compat-model.ts",
+    "../shared/agent-core/seed-history.ts",
+    "../shared/agent-core/pi-to-aisdk-stream.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

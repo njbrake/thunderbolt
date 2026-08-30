@@ -18,8 +18,11 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.22.1",
+    "@anthropic-ai/sdk": "0.91.1",
     "@better-auth/api-key": "^1.6.9",
     "@better-auth/sso": "^1.6.9",
+    "@earendil-works/pi-agent-core": "0.80.7",
+    "@earendil-works/pi-ai": "0.80.7",
     "@electric-sql/pglite": "^0.5.4",
     "@elysiajs/cors": "^1.4.0",
     "@elysiajs/jwt": "^1.4.0",
