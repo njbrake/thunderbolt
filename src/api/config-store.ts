@@ -24,6 +24,11 @@ export type AppConfig = {
    *  synced model row. Absent on a backend predating it, which reads as "no
    *  declaration" and leaves the vendor-based default in charge. */
   visionModels?: string[]
+  /** Whether this deployment will run a chat turn server-side. False on a
+   *  deployment without an inference gateway, and on any deployment with
+   *  end-to-end encryption enabled, since a server-run turn has to read the
+   *  conversation in plaintext. */
+  serverTurnsEnabled?: boolean
   /** Public VAPID key for Web Push. Present only when the deployment is
    *  configured to send notifications; absent means the app should not offer
    *  them, since a subscription without a server key can never be delivered to. */
