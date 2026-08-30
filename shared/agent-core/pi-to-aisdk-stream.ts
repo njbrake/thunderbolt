@@ -120,6 +120,17 @@ export type PiStreamMetadata = {
   readonly toolCall?: (toolName: string) => Record<string, unknown> | undefined
   /** Latest metadata snapshot after tool work/turn settlement. */
   readonly settled?: () => Record<string, unknown> | undefined
+  /**
+   * Whether a reader going away should abort the run. Defaults to `true`, which
+   * is right in the browser: the tab that cancelled owns the harness, and
+   * nothing else is waiting on the answer.
+   *
+   * Server runs set it to `false`. There the reader is a phone that locked, and
+   * the run's product is a `chat_messages` row rather than the response body, so
+   * a disconnect is not a reason to throw the work away. The prompt continues on
+   * its own promise and persists as usual; only the streaming stops.
+   */
+  readonly abortOnCancel?: boolean
 }
 
 /**
@@ -438,6 +449,12 @@ export const piHarnessToUiMessageStream = (
       closed = true
       unsubscribe?.()
       unsubscribe = null
+      if (metadata.abortOnCancel === false) {
+        // Deliberately leave the run alone. `runPrompt` is driven by its own
+        // promise in `start`, so it carries on to completion and persistence
+        // without a reader attached.
+        return
+      }
       await harness.abort()
     },
   })
