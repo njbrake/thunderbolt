@@ -234,8 +234,12 @@ test.describe('minimum app-version gate', () => {
     )
 
     // Session is established via the untouched auth routes; the 426 then flips the
-    // running app to the blocker. No reload is issued.
+    // running app to the blocker. No reload is issued. This project runs the
+    // SSO-mode frontend, so sign-in starts on a click rather than on load, and
+    // `loginViaOidc` is not usable here because it waits for the composer the
+    // blocker is supposed to replace.
     await page.goto('/')
+    await page.getByRole('button', { name: /^sign in with/i }).click()
     await expect(page.getByRole('heading', { name: 'Update required' })).toBeVisible({ timeout: 30_000 })
 
     // Upgrade wins: the blocker replaces the whole app, so the composer is gone and
