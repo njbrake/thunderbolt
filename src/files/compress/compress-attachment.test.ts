@@ -3,7 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, mock, test } from 'bun:test'
-import { compressionThresholdBytes, maybeCompressAttachment, type CompressDeps } from './compress-attachment'
+import {
+  compressionThresholdBytes,
+  maybeCompressAttachment,
+  needsTranscode,
+  prepareAttachment,
+  type CompressDeps,
+} from './compress-attachment'
 
 /** Build a File of a given logical size without allocating real bytes. */
 const fakeFile = (name: string, type: string, size: number): File => {
@@ -19,6 +25,7 @@ const smallerBlob = (size: number, type: string): Blob => new Blob([new Uint8Arr
 const deps = (over: Partial<CompressDeps> = {}): CompressDeps => ({
   compressImage: mock(async () => null),
   compressPdf: mock(async () => null),
+  transcodeImage: mock(async () => smallerBlob(512, 'image/webp')),
   ...over,
 })
 
@@ -93,5 +100,65 @@ describe('maybeCompressAttachment', () => {
     })
     const file = fakeFile('broken.png', 'image/png', overThreshold)
     expect(await maybeCompressAttachment(file, d)).toBe(file)
+  })
+})
+
+describe('needsTranscode', () => {
+  test('matches HEIC/HEIF by mime and by extension', () => {
+    expect(needsTranscode(fakeFile('a.heic', 'image/heic', 10))).toBe(true)
+    expect(needsTranscode(fakeFile('a.heif', 'image/heif', 10))).toBe(true)
+    // iOS often hands over an empty type, so the extension has to carry it.
+    expect(needsTranscode(fakeFile('IMG_0042.HEIC', '', 10))).toBe(true)
+  })
+
+  test('leaves formats models already accept alone', () => {
+    expect(needsTranscode(fakeFile('a.png', 'image/png', 10))).toBe(false)
+    expect(needsTranscode(fakeFile('a.jpg', 'image/jpeg', 10))).toBe(false)
+    expect(needsTranscode(fakeFile('a.pdf', 'application/pdf', 10))).toBe(false)
+  })
+})
+
+describe('prepareAttachment', () => {
+  test('transcodes a HEIC to WebP even when it is far below the compression threshold', async () => {
+    const d = deps()
+    const result = await prepareAttachment(fakeFile('IMG_0042.HEIC', 'image/heic', 2048), d)
+    expect(d.transcodeImage).toHaveBeenCalledTimes(1)
+    // Size is not the trigger, so the compressor must stay out of it.
+    expect(d.compressImage).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.file.type).toBe('image/webp')
+    expect(result.file.name).toBe('IMG_0042.webp')
+  })
+
+  test('reports undecodable rather than falling back to the original bytes', async () => {
+    const d = deps({
+      transcodeImage: mock(async () => {
+        throw new Error('no HEIC decoder')
+      }),
+    })
+    const result = await prepareAttachment(fakeFile('IMG_0042.HEIC', 'image/heic', 2048), d)
+    // Storing the original would ship a container the model rejects on every send.
+    expect(result).toEqual({ ok: false, reason: 'undecodable' })
+  })
+
+  test('routes a non-transcode file through compression unchanged', async () => {
+    const d = deps({ compressImage: mock(async () => smallerBlob(1024, 'image/webp')) })
+    const result = await prepareAttachment(fakeFile('big.png', 'image/png', overThreshold), d)
+    expect(d.transcodeImage).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.file.name).toBe('big.webp')
+  })
+
+  test('passes a small ordinary file straight through', async () => {
+    const d = deps()
+    const file = fakeFile('small.png', 'image/png', 10)
+    const result = await prepareAttachment(file, d)
+    expect(result).toEqual({ ok: true, file })
   })
 })

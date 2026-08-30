@@ -1016,6 +1016,10 @@ msgstr "Impossible de charger l'identité d'association de cette application : {
 msgid "Couldn't pin {name}."
 msgstr "Impossible d'épingler {name}."
 
+#: src/components/chat/chat-prompt-input.tsx
+msgid "Couldn't read \"{filename}\". This browser can't convert HEIC photos — Safari can, or export the photo as JPEG first."
+msgstr ""
+
 #: src/settings/app-version-section.tsx
 #~ msgid "Couldn't restart to apply the update"
 #~ msgstr "Impossible de redémarrer pour appliquer la mise à jour"

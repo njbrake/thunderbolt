@@ -39,6 +39,30 @@ const encodeWebp = async (bitmap: ImageBitmap, width: number, height: number): P
   })
 }
 
+/** Longest edge capped at {@link maxDimension}, preserving aspect ratio. */
+const scaledSize = (bitmap: ImageBitmap): { width: number; height: number } => {
+  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
+  return { width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) }
+}
+
+/**
+ * Decode to a bitmap and re-encode as a downscaled WebP.
+ *
+ * Phone photos usually store rotation as an EXIF orientation tag rather than
+ * baked-in pixels, and canvas → WebP drops EXIF entirely. `from-image` bakes the
+ * tag into the drawn bitmap so a portrait photo doesn't come out sideways with
+ * no metadata left to fix it downstream.
+ */
+const toWebp = async (blob: Blob): Promise<Blob> => {
+  const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' })
+  const { width, height } = scaledSize(bitmap)
+  try {
+    return await encodeWebp(bitmap, width, height)
+  } finally {
+    bitmap.close()
+  }
+}
+
 /**
  * Downscale (to {@link maxDimension}) and re-encode a raster image to WebP.
  * Returns the compressed blob when it's actually smaller than the original,
@@ -47,18 +71,18 @@ const encodeWebp = async (bitmap: ImageBitmap, width: number, height: number): P
  * falls back to the original.
  */
 export const compressImage = async (blob: Blob): Promise<Blob | null> => {
-  // Phone photos (the common >10MB case) usually store rotation as an EXIF
-  // orientation tag rather than baked-in pixels, and canvas → WebP drops EXIF
-  // entirely. `from-image` bakes the tag into the drawn bitmap so a portrait
-  // photo doesn't come out sideways with no metadata left to fix it downstream.
-  const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' })
-  const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height))
-  const width = Math.round(bitmap.width * scale)
-  const height = Math.round(bitmap.height * scale)
-  try {
-    const out = await encodeWebp(bitmap, width, height)
-    return out.size < blob.size ? out : null
-  } finally {
-    bitmap.close()
-  }
+  const out = await toWebp(blob)
+  return out.size < blob.size ? out : null
 }
+
+/**
+ * Re-encode to WebP regardless of whether it saves bytes.
+ *
+ * For a format the platform can decode but no model accepts (HEIC/HEIF, which
+ * is what an iPhone shoots by default), the container is the point, not the
+ * byte count: a HEIC that grows slightly as WebP is still the only version a
+ * model can read. Throws when the browser has no decoder for the input — today
+ * only Safari ships one for HEIC — which the caller reports rather than storing
+ * bytes nothing downstream can use.
+ */
+export const transcodeImage = async (blob: Blob): Promise<Blob> => toWebp(blob)

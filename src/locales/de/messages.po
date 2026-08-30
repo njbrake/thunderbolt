@@ -1004,6 +1004,10 @@ msgstr "Die Kopplungsidentität dieser App konnte nicht geladen werden: {error}"
 msgid "Couldn't pin {name}."
 msgstr "{name} konnte nicht angepinnt werden."
 
+#: src/components/chat/chat-prompt-input.tsx
+msgid "Couldn't read \"{filename}\". This browser can't convert HEIC photos — Safari can, or export the photo as JPEG first."
+msgstr ""
+
 #: src/settings/app-version-section.tsx
 #~ msgid "Couldn't restart to apply the update"
 #~ msgstr "Neustart zum Anwenden des Updates nicht möglich"
