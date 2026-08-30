@@ -54,6 +54,9 @@ const settingsSchema = z
     // to the gateway until at least one model is listed.
     thunderboltInferenceModels: z.string().default(''),
     thunderboltInferenceVisionModels: z.string().default(''),
+    vapidPublicKey: z.string().default(''),
+    vapidPrivateKey: z.string().default(''),
+    vapidSubject: z.string().default(''),
 
     // Health Check Configuration
     monitoringToken: z.string().default(''),
@@ -222,6 +225,9 @@ const parseSettings = (): Settings => {
     thunderboltInferenceApiKey: process.env.THUNDERBOLT_INFERENCE_API_KEY || '',
     thunderboltInferenceModels: process.env.THUNDERBOLT_INFERENCE_MODELS || '',
     thunderboltInferenceVisionModels: process.env.THUNDERBOLT_INFERENCE_VISION_MODELS || '',
+    vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+    vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
+    vapidSubject: process.env.VAPID_SUBJECT || '',
     monitoringToken: process.env.MONITORING_TOKEN || '',
     googleClientId: process.env.GOOGLE_CLIENT_ID || '',
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',

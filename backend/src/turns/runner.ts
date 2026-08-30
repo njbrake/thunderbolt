@@ -20,12 +20,19 @@ import { buildServerHarness } from './harness'
 import { loadThread } from './history'
 import { persistAssistantMessage } from './persist'
 import { claimQueuedRuns, claimRun, markFailed, markSucceeded } from './store'
+import { sendPushToUser } from '@/push/service'
 
 type TurnRunRow = typeof turnRuns.$inferSelect
 
+/** Notification preview: one line, short enough for a lock screen. */
+const firstLine = (text: string): string => {
+  const line = text.trim().split('\n')[0] ?? ''
+  return line.length > 120 ? `${line.slice(0, 119)}…` : line
+}
+
 export type TurnRunnerDeps = {
   readonly settings: Settings
-  readonly database: Pick<typeof db, 'select' | 'insert' | 'update'>
+  readonly database: Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>
   readonly logger?: { info: (obj: object, msg: string) => void; error: (obj: object, msg: string) => void }
 }
 
@@ -84,6 +91,21 @@ export const executeTurnRun = async (deps: TurnRunnerDeps, run: TurnRunRow): Pro
     })
     await markSucceeded(database, run.id)
     logger?.info({ event: 'turn_run_succeeded', runId: run.id, model: run.modelId }, 'Detached turn finished')
+
+    // After the answer is durable, never before. A notification is a nudge
+    // toward something that already exists; sending it first would let a failed
+    // push look like a lost answer.
+    await sendPushToUser(
+      database,
+      settings,
+      run.userId,
+      {
+        title: 'Your answer is ready',
+        body: firstLine(collector.text()),
+        url: `/chats/${run.chatThreadId}`,
+      },
+      logger,
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await markFailed(database, run.id, message)
