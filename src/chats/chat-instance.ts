@@ -9,6 +9,9 @@ import {
 } from '@/acp/adapter-cache'
 import type { AcpCommand, SessionSideEffect } from '@/acp/translators/acp-to-ai-sdk'
 import { useAgentCommandsStore } from '@/acp/agent-commands-store'
+import { useConfigStore } from '@/api/config-store'
+import { canRunTurnOnServer } from './server-turn-eligibility'
+import { runTurnOnServer } from './server-turn-transport'
 import {
   createTurnBudget as defaultCreateTurnBudget,
   createTurnBudgetExhaustedError,
@@ -346,6 +349,34 @@ export const createAgentRoutingFetch = (
       // break resume/load on the next reconnect. `id` is that same row's id.
       const persistAcpSessionId = async (newSessionId: string): Promise<void> => {
         await updateChatThread(getDb(), id, { acpSessionId: newSessionId })
+      }
+
+      // Hand the turn to the server when it can run there. The stream it
+      // returns is the same wire format this transport already consumes, so
+      // rendering, retries and `onFinish` are unchanged — the difference is
+      // that the run no longer belongs to this tab, and survives it closing.
+      //
+      // History travels in the request rather than being read back from
+      // Postgres, which lags this client's own just-saved user message by a
+      // sync round-trip and would run the turn a message short.
+      if (
+        canRunTurnOnServer({
+          serverTurnsEnabled: useConfigStore.getState().config.serverTurnsEnabled,
+          agent: selectedAgent,
+          model: selectedModel,
+          connectedMcpCount: mcpClients.length,
+        })
+      ) {
+        const serverTurn = await runTurnOnServer(httpClient, {
+          threadId: id,
+          modelId: selectedModel.model,
+          messages: requestMessages,
+        })
+        if (serverTurn) {
+          return serverTurn
+        }
+        // Falling through is deliberate: a server that cannot take the turn
+        // right now is a reason to answer in the tab, not to fail the send.
       }
 
       // Surface `connecting` only when routing to a different agent than this

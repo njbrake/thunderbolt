@@ -6,6 +6,7 @@ import type { Settings } from '@/config/settings'
 import { ensureGatewayModels, getGatewaySharedModels, parseGatewayVisionModelIds } from '@/inference/gateway-models'
 import { supportedModels } from '@/inference/routes'
 import { safeErrorHandler } from '@/middleware/error-handling'
+import { serverTurnsAvailable } from '@/turns/availability'
 import { getWebCapabilities } from '@/web/providers'
 import { defaultModels, defaultModelsVersion, type SharedModel } from '@shared/defaults/models'
 import { Elysia } from 'elysia'
@@ -119,6 +120,10 @@ export const createConfigRoutes = (settings: Settings) =>
     // information, so without an operator declaration the built-in agent
     // advertises text-only and silently drops image blocks before the wire.
     visionModels: parseGatewayVisionModelIds(settings.thunderboltInferenceVisionModels),
+    // Whether the client may hand a turn to the server at all. It cannot infer
+    // this: the answer depends on the gateway credentials and the encryption
+    // setting, neither of which the browser can see.
+    serverTurnsEnabled: serverTurnsAvailable(settings),
     // The client needs this to create a push subscription at all. Public by
     // design — it is the key push services verify signatures against. Omitted
     // when unset so the frontend reads "this deployment cannot notify".

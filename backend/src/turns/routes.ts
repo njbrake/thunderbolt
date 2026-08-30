@@ -22,7 +22,7 @@ import { Elysia, t } from 'elysia'
 import { loadThread } from './history'
 import { buildServerHarness } from './harness'
 import { persistAssistantMessage } from './persist'
-import { createTurnRun } from './store'
+import { createTurnRun, markSucceeded } from './store'
 import { startTurnRun } from './runner'
 
 export type CreateTurnRoutesOptions = {
@@ -31,18 +31,11 @@ export type CreateTurnRoutesOptions = {
   readonly database: Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>
 }
 
-/**
- * Whether this deployment may run turns server-side at all.
- *
- * Server-side execution requires reading the conversation in plaintext, which is
- * precisely what a zero-knowledge deployment promises never happens. The two
- * features are mutually exclusive on the same data, so a deployment that has
- * turned encryption on does not get this one. Refusing loudly is the point: a
- * silent client-side fallback would leave an operator believing detached turns
- * work when they never run.
- */
-export const serverTurnsAvailable = (settings: Settings): boolean =>
-  !settings.e2eeEnabled && !!settings.thunderboltInferenceUrl && !!settings.thunderboltInferenceApiKey
+// Lives in its own module so `GET /config` can read it without pulling the Pi
+// engine in through this file's harness import. Re-exported here because
+// callers have always found it on the routes module.
+export { serverTurnsAvailable } from './availability'
+import { serverTurnsAvailable } from './availability'
 
 export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesOptions) =>
   new Elysia({ prefix: '/turns' })
@@ -61,7 +54,11 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
         }
 
         const { threadId, modelId, prompt } = ctx.body
-        const { history, tailMessageId } = await loadThread(database, ctx.user.id, threadId)
+        const stored = await loadThread(database, ctx.user.id, threadId)
+        // The client's view wins when it sends one: it is authoritative and
+        // current, where the stored copy is whatever has synced so far.
+        const history = ctx.body.history ?? stored.history
+        const { tailMessageId } = stored
 
         // Detached: record the turn, start it, and return. The answer arrives as
         // a `chat_messages` row that PowerSync replicates whenever the device
@@ -100,6 +97,18 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
           history,
         })
 
+        // A run record even for an attached turn: it reserves the assistant
+        // message id, which the stream announces so the client saves to the same
+        // row the server writes, and it makes the turn recoverable if the
+        // process dies mid-answer.
+        const run = await createTurnRun(database, {
+          userId: ctx.user.id,
+          chatThreadId: threadId,
+          modelId,
+          prompt,
+          parentMessageId: tailMessageId,
+        })
+
         // Subscribed before the run so no early delta is missed.
         const collector = collectAssistantText(harness)
 
@@ -117,14 +126,17 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
               // answer is durable. A reader that sees the end of the stream can
               // rely on the message being in the thread.
               await persistAssistantMessage(database, {
+                id: run.assistantMessageId,
                 userId: ctx.user.id,
                 threadId,
                 modelId,
                 parentId: tailMessageId,
                 text: collector.text(),
               })
+              await markSucceeded(database, run.id)
             },
             {
+              messageId: run.assistantMessageId,
               initial: { modelId },
               // A reader that goes away is the expected case, not a cancellation:
               // the phone locked. The answer's destination is `chat_messages`,
@@ -143,6 +155,12 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
           modelId: t.String({ minLength: 1 }),
           prompt: t.String({ minLength: 1 }),
           systemPrompt: t.Optional(t.String()),
+          /** Prior turns as the client sees them. Preferred over reading them
+           *  back from Postgres, which lags the client's own local write by a
+           *  sync round-trip and would otherwise run the turn a message short. */
+          history: t.Optional(
+            t.Array(t.Object({ role: t.Union([t.Literal('user'), t.Literal('assistant')]), text: t.String() })),
+          ),
           /** Run without holding this request open. The answer is delivered
            *  through sync rather than through the response body. */
           detach: t.Optional(t.Boolean()),

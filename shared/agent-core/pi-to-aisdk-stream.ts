@@ -114,6 +114,15 @@ type PiTranslator = {
 }
 
 export type PiStreamMetadata = {
+  /**
+   * Id the assistant message should carry.
+   *
+   * Lets the producer name the message rather than letting the reader mint one.
+   * A server-run turn uses this so the row it writes and the row the client
+   * saves from the same stream are the same row: two writers that agree, rather
+   * than two messages in the thread.
+   */
+  readonly messageId?: string
   /** Metadata emitted once when the assistant message starts. */
   readonly initial?: Record<string, unknown>
   /** Metadata for one invoked tool, such as MCP ownership. */
@@ -234,7 +243,7 @@ const createPiTranslator = (emit: (chunk: AiSdkChunk) => void, metadata: PiStrea
       return
     }
     if (!started) {
-      emit({ type: 'start' })
+      emit({ type: 'start', messageId: metadata.messageId })
       started = true
     }
     emitInitialMetadata()
@@ -255,7 +264,7 @@ const createPiTranslator = (emit: (chunk: AiSdkChunk) => void, metadata: PiStrea
     switch (event.type) {
       case 'agent_start': {
         if (!started) {
-          emit({ type: 'start' })
+          emit({ type: 'start', messageId: metadata.messageId })
           started = true
         }
         emitInitialMetadata()
