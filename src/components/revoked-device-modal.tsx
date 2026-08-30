@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { Trans, useLingui } from '@lingui/react/macro'
 import { HardDrive, Loader2, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -30,6 +31,7 @@ type RevokedDeviceModalProps = {
 }
 
 export const RevokedDeviceModal = ({ open, clearLocalData = defaultClearLocalData }: RevokedDeviceModalProps) => {
+  const { t } = useLingui()
   const [selectedOption, setSelectedOption] = useState<DataOption>('keep')
   const [isProcessing, setIsProcessing] = useState(false)
 
@@ -48,9 +50,11 @@ export const RevokedDeviceModal = ({ open, clearLocalData = defaultClearLocalDat
       onEscapeKeyDown={(e) => e.preventDefault()}
     >
       <ResponsiveModalHeader>
-        <ResponsiveModalTitle>Device access revoked</ResponsiveModalTitle>
+        <ResponsiveModalTitle>
+          <Trans>Device access revoked</Trans>
+        </ResponsiveModalTitle>
         <ResponsiveModalDescription>
-          This device has been signed out remotely. Choose what to do with your local data.
+          <Trans>This device has been signed out remotely. Choose what to do with your local data.</Trans>
         </ResponsiveModalDescription>
       </ResponsiveModalHeader>
 
@@ -59,15 +63,15 @@ export const RevokedDeviceModal = ({ open, clearLocalData = defaultClearLocalDat
           selected={selectedOption === 'keep'}
           onSelect={() => setSelectedOption('keep')}
           icon={<HardDrive className="h-5 w-5" />}
-          title="Keep data on device"
-          description="Your chats and settings will remain on this device for offline use."
+          title={t`Keep data on device`}
+          description={t`Your chats and settings will remain on this device for offline use.`}
         />
         <SelectableCard
           selected={selectedOption === 'delete'}
           onSelect={() => setSelectedOption('delete')}
           icon={<Trash2 className="h-5 w-5" />}
-          title="Delete data from device"
-          description="Remove all chats, settings, and cached data from this device."
+          title={t`Delete data from device`}
+          description={t`Remove all chats, settings, and cached data from this device.`}
           variant="destructive"
         />
       </ResponsiveModalContent>
@@ -81,10 +85,10 @@ export const RevokedDeviceModal = ({ open, clearLocalData = defaultClearLocalDat
           {isProcessing ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              {selectedOption === 'delete' ? 'Deleting...' : 'Signing out...'}
+              {selectedOption === 'delete' ? <Trans>Deleting…</Trans> : <Trans>Signing out…</Trans>}
             </>
           ) : (
-            'Confirm'
+            <Trans>Confirm</Trans>
           )}
         </Button>
       </FormFooter>

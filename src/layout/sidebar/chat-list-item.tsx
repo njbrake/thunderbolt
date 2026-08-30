@@ -2,13 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { chatTitleLabel } from '@/lib/title-generator'
+
+import { Trans, useLingui } from '@lingui/react/macro'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ResponsiveActionMenu } from '@/components/ui/responsive-action-menu'
 import { SidebarMenuButton } from '@/components/ui/sidebar'
 import { useLongPress } from '@/hooks/use-long-press'
+import { useDraggable } from '@dnd-kit/core'
+import { chatDragId, type ChatDragData } from '@/projects/chat-drop'
 import { cn } from '@/lib/utils'
-import { Loader2, MessageCircle, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { FolderInput, Loader2, MessageCircle, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { memo, useReducer, useRef, type ComponentType, type MouseEventHandler, type ReactNode } from 'react'
 import type { ChatListItemProps } from './types'
 import { useChatStore } from '@/chats/chat-store'
@@ -84,12 +89,14 @@ type MenuItemComponent = ComponentType<{
 const ChatItemActions = ({
   Item,
   onRename,
+  onMove,
   onDelete,
   deleteLabel,
   isDeletePending,
 }: {
   Item: MenuItemComponent
   onRename: () => void
+  onMove: () => void
   onDelete: () => void
   deleteLabel: ReactNode
   isDeletePending: boolean
@@ -97,7 +104,11 @@ const ChatItemActions = ({
   <>
     <Item onClick={onRename} className="cursor-pointer">
       <Pencil className="size-4 mr-2" />
-      Rename
+      <Trans>Rename</Trans>
+    </Item>
+    <Item onClick={onMove} className="cursor-pointer">
+      <FolderInput className="size-4 mr-2" />
+      <Trans>Move to project</Trans>
     </Item>
     <Item onClick={onDelete} disabled={isDeletePending} className="cursor-pointer">
       {deleteLabel}
@@ -116,8 +127,10 @@ export const ChatListItem = memo(
     deleteChatDialogRef,
     onChatClick,
     onRename,
+    onMoveToProject,
     useChat = useChat_default,
   }: ChatListItemComponentProps) => {
+    const { i18n, t } = useLingui()
     const chatInstance = useChatStore((state) => state.sessions.get(thread.id)?.chatInstance)
 
     const { status } = useChat(
@@ -131,7 +144,19 @@ export const ChatListItem = memo(
       dispatch({ type: 'MENU_CHANGED', menu: 'mobile', open: true })
     })
 
-    const displayTitle = optimisticTitle ?? thread.title
+    const {
+      attributes: dragAttributes,
+      listeners: dragListeners,
+      setNodeRef: setDragRef,
+      isDragging,
+    } = useDraggable({
+      id: chatDragId(thread.id),
+      // Carried on the drag so the sidebar can render a preview and decide
+      // whether "Remove from project" applies, with no extra query.
+      data: { title: thread.title, projectId: thread.projectId ?? null } satisfies ChatDragData,
+    })
+
+    const displayTitle = optimisticTitle ?? chatTitleLabel(i18n, thread.title)
 
     const handleRename = (title: string) => {
       dispatch({ type: 'RENAMED', title })
@@ -146,7 +171,7 @@ export const ChatListItem = memo(
           onClick={() => onChatClick(thread.id)}
           isActive={isActive}
           className="cursor-pointer"
-          tooltip={thread.title ?? undefined}
+          tooltip={chatTitleLabel(i18n, thread.title)}
         >
           {showSpinner ? (
             <Loader2 className="size-[var(--icon-size-default)] animate-spin text-muted-foreground" />
@@ -160,6 +185,12 @@ export const ChatListItem = memo(
     const startRename = () => {
       isOpeningDialogRef.current = true
       dispatch({ type: 'RENAME_DIALOG_CHANGED', open: true })
+    }
+    // The picker is owned by the sidebar: one dialog for the whole list rather
+    // than one per row, and it needs the database context that a row does not.
+    const startMove = () => {
+      isOpeningDialogRef.current = true
+      onMoveToProject(thread.id, thread.projectId ?? null)
     }
     const startDelete = () => {
       isOpeningDialogRef.current = true
@@ -177,7 +208,7 @@ export const ChatListItem = memo(
     ) : (
       <>
         <Trash2 className="size-4 mr-2" />
-        Delete
+        <Trans>Delete</Trans>
       </>
     )
 
@@ -239,16 +270,21 @@ export const ChatListItem = memo(
             open={openMenu === 'mobile'}
             onOpenChange={handleMenuOpenChange('mobile')}
             trigger={trigger}
-            title={displayTitle ?? 'Chat actions'}
+            title={displayTitle ?? t`Chat actions`}
             openOnTriggerClickMobile={false}
             actions={[
               {
-                label: 'Rename',
+                label: t`Rename`,
                 icon: <Pencil className="size-4" />,
                 onSelect: startRename,
               },
               {
-                label: 'Delete',
+                label: t`Move to project`,
+                icon: <FolderInput className="size-4" />,
+                onSelect: startMove,
+              },
+              {
+                label: t`Delete`,
                 icon: deleteIcon,
                 onSelect: startDelete,
                 disabled: deleteChatMutation.isPending,
@@ -267,7 +303,17 @@ export const ChatListItem = memo(
             {/* The list `li` is provided by the virtualized row wrapper in
                 chat-list.tsx; this div carries the group classes the menu
                 button's hover/action styles key off. */}
-            <div data-sidebar="menu-item" className="group/menu-item group/item relative">
+            <div
+              data-sidebar="menu-item"
+              // Draggable so the chat can be dropped onto a project row. The
+              // sensor in `ChatSidebarContent` requires 8px of movement before a
+              // drag starts, so ordinary clicks, the context menu, and the mobile
+              // long-press all keep working.
+              ref={setDragRef}
+              {...dragListeners}
+              {...dragAttributes}
+              className={cn('group/menu-item group/item relative', isDragging && 'opacity-50')}
+            >
               <ContextMenuTrigger asChild>
                 <SidebarMenuButton
                   onClick={() => onChatClick(thread.id)}
@@ -312,6 +358,7 @@ export const ChatListItem = memo(
                 <ChatItemActions
                   Item={ContextMenuItem}
                   onRename={startRename}
+                  onMove={startMove}
                   onDelete={startDelete}
                   deleteLabel={deleteLabel}
                   isDeletePending={deleteChatMutation.isPending}
@@ -328,6 +375,7 @@ export const ChatListItem = memo(
                 <ChatItemActions
                   Item={DropdownMenuItem}
                   onRename={startRename}
+                  onMove={startMove}
                   onDelete={startDelete}
                   deleteLabel={deleteLabel}
                   isDeletePending={deleteChatMutation.isPending}

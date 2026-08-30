@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { Trans, useLingui } from '@lingui/react/macro'
 import { DeleteAllChatsDialog } from '@/components/delete-all-chats-dialog'
 import { DeleteChatDialog } from '@/components/delete-chat-dialog'
 import { MobileSidebarScrim } from '@/components/ui/scrim'
@@ -94,8 +95,10 @@ export const ChatList = ({
   mobileSecondaryNavigation,
   onChatClick,
   onRename,
+  onMoveToProject,
   onSearchClick,
 }: ChatListProps) => {
+  const { t } = useLingui()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const {
     headerRef: mobileHeaderRef,
@@ -141,7 +144,7 @@ export const ChatList = ({
       <SidebarMenuItem>
         <SidebarMenuButton
           onClick={onSearchClick}
-          tooltip="Search"
+          tooltip={t`Search`}
           className="cursor-pointer text-muted-foreground hover:text-sidebar-foreground"
         >
           <Search className="size-[var(--icon-size-default)]" />
@@ -153,7 +156,7 @@ export const ChatList = ({
             <SidebarMenuButton
               onClick={() => deleteAllChatsDialogRef.current?.open()}
               disabled={deleteAllChatsMutation.isPending}
-              tooltip="Clear all chats"
+              tooltip={t`Clear all chats`}
               className="cursor-pointer text-muted-foreground hover:text-sidebar-foreground"
             >
               {deleteAllChatsMutation.isPending ? (
@@ -172,7 +175,13 @@ export const ChatList = ({
     </SidebarMenu>
   ) : (
     <div className="flex items-center justify-between flex-shrink-0">
-      {hasListContent ? <SidebarGroupLabel>Recent Chats</SidebarGroupLabel> : <span aria-hidden />}
+      {hasListContent ? (
+        <SidebarGroupLabel>
+          <Trans>Recent Chats</Trans>
+        </SidebarGroupLabel>
+      ) : (
+        <span aria-hidden />
+      )}
       {chatActions}
     </div>
   )
@@ -203,7 +212,7 @@ export const ChatList = ({
                 style={{ height: mobileListMetrics.headerHeight }}
               />
               <SidebarGroupLabel ref={mobileLabelRef} className="mt-1">
-                {hasListContent ? 'Recent Chats' : 'No chats yet'}
+                {hasListContent ? <Trans>Recent Chats</Trans> : <Trans>No chats yet</Trans>}
               </SidebarGroupLabel>
             </>
           )}
@@ -230,6 +239,7 @@ export const ChatList = ({
                   deleteChatDialogRef={deleteChatDialogRef}
                   onChatClick={onChatClick}
                   onRename={onRename}
+                  onMoveToProject={onMoveToProject}
                 />
               ))}
             </Virtualizer>

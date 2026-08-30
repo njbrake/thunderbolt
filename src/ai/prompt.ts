@@ -17,7 +17,6 @@ export type PromptParams = {
   localization: {
     distanceUnit: string
     temperatureUnit: string
-    dateFormat: string
     timeFormat: string
     currency: string
   }
@@ -32,6 +31,12 @@ export type PromptParams = {
   skills?: readonly SkillDefinition[]
   /** Whether the model can load skill instructions through tools */
   supportsTools?: boolean
+  /**
+   * Pre-rendered `# Project` section when the thread belongs to a project (see
+   * `src/projects/project-prompt.ts`). Already budgeted and delimited; this
+   * builder only decides *where* it sits.
+   */
+  projectSection?: string | null
 }
 
 export type PromptParts = {
@@ -68,6 +73,7 @@ export const createPromptParts = (
     mcpServersSummary,
     skills = [],
     supportsTools = true,
+    projectSection = null,
   }: PromptParams,
   currentDate: Date = new Date(),
 ): PromptParts => {
@@ -93,7 +99,7 @@ export const createPromptParts = (
     location.name
       ? `User location: ${location.name}${location.lat && location.lng ? ` (${location.lat}, ${location.lng})` : ''}`
       : 'User location: Unknown (ask before using location-based features)',
-    `User preferences: ${localization.distanceUnit}, ${localization.temperatureUnit}, ${localization.dateFormat}, ${localization.timeFormat}, ${localization.currency}`,
+    `User preferences: ${localization.distanceUnit}, ${localization.temperatureUnit}, ${localization.timeFormat}, ${localization.currency}`,
     `Integration status: ${integrationStatus}`,
   ]
     .filter(Boolean)
@@ -119,7 +125,7 @@ Reasoning: low
 
 # Context
 ${contextSection}
-
+${projectSection ? `\n${projectSection}\n` : ''}
 # Tools
 Choose one policy bucket before answering:
 • never_search — Stable facts, math, code, creative work, opinions, and conversation: answer directly.

@@ -2,10 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import '@/lib/dayjs'
+import { I18nProvider } from '@lingui/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router'
 import { PowerSyncContext } from '@powersync/react'
+
+import { i18n } from '@/i18n'
 
 import ChatDetailPage from '@/chats/detail'
 import AuthError from '@/components/auth-error'
@@ -32,6 +34,8 @@ import {
   useHttpClient,
 } from '@/contexts'
 import { usePageTracking } from '@/hooks/use-analytics'
+import { useAppLanguage } from '@/hooks/use-app-language'
+import { useUnitDefaults } from '@/hooks/use-unit-defaults'
 import { useDeepLinkListener } from '@/hooks/use-deep-link-listener'
 import { useKeyboardInset } from '@/hooks/use-keyboard-inset'
 import { useViewportLock } from '@/hooks/use-viewport-lock'
@@ -41,7 +45,7 @@ import { ThemeProvider } from '@/lib/theme-provider'
 import { AppErrorScreen } from './components/app-error-screen'
 import { UpgradeRequired } from './components/upgrade-required'
 import { useConfigStore } from '@/api/config-store'
-import { compareSemver } from '@/lib/compare-semver'
+import { isVersionBelowMinimum } from '@/lib/app-version'
 import { AuthGate } from './components/auth-gate'
 import { OnboardingDialog } from './components/onboarding/onboarding-dialog'
 import { WelcomeDialog } from './components/welcome-dialog'
@@ -50,6 +54,7 @@ import { UpdateNotification } from './components/update-notification'
 import { ExternalLinkDialogProvider } from './components/chat/markdown-utils'
 import { ContentViewProvider } from './content-view/context'
 import { useAppInitialization } from './hooks/use-app-initialization'
+import { useAppVersionUnsupportedListener } from './hooks/use-app-version-unsupported-listener'
 import { useCredentialEvents } from './hooks/use-credential-events'
 import { useSafeAreaInset } from './hooks/use-safe-area-inset'
 import Layout from './layout'
@@ -84,6 +89,8 @@ const loadMotionFeatures = () => import('@/lib/motion-features').then((mod) => m
 // live outside the map.
 const routeChunkLoaders = {
   tasks: () => import('@/tasks'),
+  // Secondary feature, off the chat/landing critical path — lazy per CLAUDE.md.
+  projects: () => import('@/projects'),
   settings: () => import('@/settings/index'),
   preferences: () => import('@/settings/preferences'),
   models: () => import('@/settings/models'),
@@ -97,6 +104,7 @@ const routeChunkLoaders = {
 }
 
 const TasksPage = lazy(routeChunkLoaders.tasks)
+const ProjectsPage = lazy(routeChunkLoaders.projects)
 const Settings = lazy(routeChunkLoaders.settings)
 const PreferencesSettingsPage = lazy(routeChunkLoaders.preferences)
 const ModelsPage = lazy(routeChunkLoaders.models)
@@ -170,6 +178,8 @@ const useBootstrapSystemAgents = () => {
 const AppContent = ({ initData }: { initData: InitData }) => {
   useMcpSync()
   useBootstrapSystemAgents()
+  useAppLanguage()
+  useUnitDefaults()
   useKeyboardInset()
   useViewportLock()
   useSafeAreaInset()
@@ -249,6 +259,12 @@ const AppRoutes = ({ initData }: { initData: InitData }) => {
               <Route index element={<Navigate to="/chats/new" replace />} />
               <Route path="chats/:chatThreadId" element={<ChatDetailPage />} />
               {experimentalFeatureTasks.value && <Route path="tasks" element={<TasksPage />} />}
+              {/* One component for both: `:projectId` is the list with that
+                  project's slide-out open, so a deep link, a sidebar row, a search
+                  hit, and the chat badge all land on the same surface — and there
+                  is one place a project is edited. */}
+              <Route path="projects" element={<ProjectsPage />} />
+              <Route path="projects/:projectId" element={<ProjectsPage />} />
               {import.meta.env.DEV && <Route path="message-simulator" element={<MessageSimulatorPage />} />}
             </Route>
 
@@ -286,6 +302,7 @@ export const App = () => {
   useState(markAppMounted)
   const { initData, initError, isInitializing, clearDatabase } = useAppInitialization()
   const { revokedDeviceOpen } = useCredentialEvents()
+  useAppVersionUnsupportedListener()
 
   // Show the Tauri window after React mounts and CSS is applied.
   // The window starts hidden (tauri.conf.json visible: false) to prevent
@@ -300,12 +317,23 @@ export const App = () => {
   // Reactive gate: re-evaluates whenever the config store updates, so the
   // upgrade screen tracks the current server-enforced minimum.
   const minAppVersion = useConfigStore((s) => s.config.minAppVersion)
+  const forceUpgrade = useConfigStore((s) => s.forceUpgrade)
+  const forceUpgradeMinVersion = useConfigStore((s) => s.forceUpgradeMinVersion)
   const appVersion = import.meta.env.VITE_APP_VERSION
-  const upgradeRequired = !!minAppVersion && !!appVersion && compareSemver(appVersion, minAppVersion) < 0
+  // A response-triggered 426 (`forceUpgrade`) blocks immediately for the session;
+  // the config-driven semver gate blocks on every load below the enforced minimum.
+  // Same rule the sync layer enforces via `isAppVersionUnsupported` — shared so the
+  // blocker and the sync teardown can never disagree about what "too old" means.
+  const upgradeRequired = forceUpgrade || isVersionBelowMinimum(appVersion, minAppVersion)
 
   const renderAppContent = () => {
     if (upgradeRequired) {
-      return <UpgradeRequired currentVersion={appVersion ?? 'unknown'} minVersion={minAppVersion ?? 'unknown'} />
+      return (
+        <UpgradeRequired
+          currentVersion={appVersion ?? 'unknown'}
+          minVersion={forceUpgradeMinVersion ?? minAppVersion ?? 'unknown'}
+        />
+      )
     }
     if (initError) {
       if (initError.code === 'STORAGE_UNAVAILABLE') {
@@ -356,18 +384,24 @@ export const App = () => {
   }
 
   return (
-    <ThemeProvider>
-      <LazyMotion features={loadMotionFeatures} strict>
-        {renderAppContent()}
-        <WindowControls />
-        <RevokedDeviceModal open={revokedDeviceOpen} />
-        {/* Outside `renderAppContent` on purpose. This is the only surface that
-            can replace a broken client build, so it must survive the states
-            where the app itself cannot render: sign-in, the init-error screen,
-            and the forced-upgrade screen. It also puts service-worker
-            registration on the boot path rather than behind authentication. */}
-        <UpdateNotification />
-      </LazyMotion>
-    </ThemeProvider>
+    // The source locale is activated synchronously in src/i18n, so the
+    // provider never blocks first paint waiting for a catalog chunk.
+    <I18nProvider i18n={i18n}>
+      <ThemeProvider>
+        <LazyMotion features={loadMotionFeatures} strict>
+          {renderAppContent()}
+          <WindowControls />
+          {/* The upgrade blocker replaces the whole app, so it must win over the
+              revoked-device modal that renders outside renderAppContent. */}
+          <RevokedDeviceModal open={revokedDeviceOpen && !upgradeRequired} />
+          {/* Outside `renderAppContent` on purpose. This is the only surface that
+              can replace a broken client build, so it must survive the states
+              where the app itself cannot render: sign-in, the init-error screen,
+              and the forced-upgrade screen. It also puts service-worker
+              registration on the boot path rather than behind authentication. */}
+          <UpdateNotification />
+        </LazyMotion>
+      </ThemeProvider>
+    </I18nProvider>
   )
 }

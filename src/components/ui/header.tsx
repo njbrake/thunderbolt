@@ -2,7 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { Trans } from '@lingui/react/macro'
+import type { ReactNode } from 'react'
+
 import { AgentSelector } from '@/components/ui/agent-selector'
+import { ProjectBadge } from '@/projects/project-badge'
 import { useCreateItem } from '@/components/create-item/context'
 import { Button, mutedIconButtonClass } from '@/components/ui/button'
 import { mobileHeaderControlFillClass } from '@/components/ui/modal-styles'
@@ -45,6 +49,10 @@ type HeaderAgentSelectorProps = {
    *  exists (or a send is in flight). Both states share one element, so the
    *  submit transition animates instead of remounting. */
   mobile?: { hasThread: boolean; dragProps: TauriDragProps }
+  /** Rendered immediately left of the selector, inside its positioned wrapper on
+   *  mobile so it docks with the pill instead of being laid out against a header
+   *  column the pill has left. */
+  leading?: ReactNode
 }
 
 const HeaderAgentSelector = ({
@@ -54,6 +62,7 @@ const HeaderAgentSelector = ({
   onSelect,
   onAddAgent,
   mobile,
+  leading,
 }: HeaderAgentSelectorProps) => {
   const { status } = useChat({ chat: chatInstance, experimental_throttle: statusOnlyThrottleMs })
   const isReplying = status === 'streaming' || status === 'submitted'
@@ -101,6 +110,10 @@ const HeaderAgentSelector = ({
         collapsed ? '[translate:calc(50cqw-100%)_0]' : '[translate:-50%_0]',
       )}
     >
+      {/* Inside the wrapper, so the docked translate (which pins the group's
+          right edge to the content edge) accounts for it and the two circles
+          travel together. */}
+      {leading}
       {selector}
     </div>
   )
@@ -134,7 +147,9 @@ const HistoryNavButtons = () => {
         onClick={() => void navigate(-1)}
       >
         <ArrowLeft className="size-[var(--icon-size-default)]" />
-        <span className="sr-only">Go back</span>
+        <span className="sr-only">
+          <Trans>Go back</Trans>
+        </span>
       </Button>
       <Button
         variant="ghost"
@@ -144,7 +159,9 @@ const HistoryNavButtons = () => {
         onClick={() => void navigate(1)}
       >
         <ArrowRight className="size-[var(--icon-size-default)]" />
-        <span className="sr-only">Go forward</span>
+        <span className="sr-only">
+          <Trans>Go forward</Trans>
+        </span>
       </Button>
     </div>
   )
@@ -213,6 +230,7 @@ export const Header = () => {
       agents={allAgents}
       onSelect={handleAgentSelect}
       onAddAgent={allowCustomAgents ? handleAddAgent : undefined}
+      leading={isChatRoute ? <ProjectBadge chatThreadId={chatThreadId ?? null} iconOnly /> : undefined}
       mobile={isMobile ? { hasThread, dragProps } : undefined}
     />
   )
@@ -242,7 +260,9 @@ export const Header = () => {
             onClick={toggleSidebar}
           >
             <PanelLeftRounded className="size-[var(--icon-size-default)]" />
-            <span className="sr-only">Toggle Sidebar</span>
+            <span className="sr-only">
+              <Trans>Toggle Sidebar</Trans>
+            </span>
           </Button>
         </div>
 
@@ -276,11 +296,17 @@ export const Header = () => {
         {showSidebarToggle && (
           <Button variant="ghost" size="icon" className={headerIconButtonClass} onClick={toggleSidebar}>
             <PanelLeftRounded className="size-[var(--icon-size-default)]" />
-            <span className="sr-only">Expand Sidebar</span>
+            <span className="sr-only">
+              <Trans>Expand Sidebar</Trans>
+            </span>
           </Button>
         )}
         {isTauriDesktop() && <HistoryNavButtons />}
         {agentSelector}
+        {/* Beside the agent selector rather than centred: it groups with the other
+            "what this chat is" controls. Desktop only — the mobile header positions
+            the agent pill absolutely and has no room next to it. */}
+        {isChatRoute && <ProjectBadge chatThreadId={chatThreadId ?? null} />}
       </div>
     </header>
   )

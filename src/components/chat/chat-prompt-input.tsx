@@ -28,6 +28,9 @@ import {
 } from '@/skills/use-skills'
 import { type AttachmentData, type Model, type Skill } from '@/types'
 import { useChat as useChat_default } from '@ai-sdk/react'
+import type { MessageDescriptor } from '@lingui/core'
+import { msg } from '@lingui/core/macro'
+import { Trans, useLingui } from '@lingui/react/macro'
 import { messageBookkeepingThrottleMs } from '@/chats/chat-throttle'
 import { useDraftInput } from '@/hooks/use-draft-input'
 import { AnimatePresence, m } from 'framer-motion'
@@ -44,6 +47,7 @@ import { buildAttachmentPart } from '@/lib/attachments'
 import { buildQuotePart } from '@/lib/quotes'
 import { QuoteChip } from './quote-chip'
 import { deleteAttachment, putAttachment } from '@/lib/file-blob-storage'
+import { resolveTextMimeType } from '@/files/transformers'
 import { maybeCompressAttachment } from '@/files/compress/compress-attachment'
 import { VoiceModeButton } from '@/voice/ui/voice-mode-button'
 import { VoiceModeComposer } from '@/voice/ui/voice-mode-composer'
@@ -95,6 +99,15 @@ const isAcceptedAttachment = (file: File): boolean =>
   acceptedAttachmentMimeTypes.has(file.type) ||
   acceptedAttachmentExtensions.some((ext) => file.name.toLowerCase().endsWith(ext))
 
+/**
+ * Normalize a file's MIME before it is stored.
+ *
+ * Load-bearing, not cosmetic: a `.md` commonly arrives with an **empty** `type`,
+ * and `defaultDeliveryMode('')` routes an attachment as *native bytes* — which a
+ * model can't read. Resolving to `text/plain` here makes it deliver as text.
+ */
+const attachmentMimeType = (file: File): string => resolveTextMimeType(file.name, file.type)
+
 /** Clipboard files (e.g. a pasted screenshot) often arrive with an empty name.
  *  Give them a stable, extension-bearing filename so the chip renders and the
  *  extension-based accept check has something to work with. */
@@ -106,27 +119,33 @@ const withClipboardFilename = (file: File, index: number): File => {
   return new File([file], `pasted-image-${Date.now()}-${index}.${ext}`, { type: file.type })
 }
 
+const connectionFailed = msg`Connection failed`
+
+/** Wraps a server-supplied string as a descriptor with no catalog entry, so the
+ *  caller has one type to resolve: `i18n._` returns it verbatim on a miss. */
+const asDescriptor = (message: string): MessageDescriptor => ({ id: message, message })
+
 /**
  * Extract a human-readable display string from a connection error.
  * Handles JSON-RPC error messages (which have nested data.message),
  * plain strings, and generic Error objects.
  */
-const extractErrorDisplay = (error: Error | null | undefined): string => {
+const extractErrorDisplay = (error: Error | null | undefined): MessageDescriptor => {
   if (!error?.message) {
-    return 'Connection failed'
+    return connectionFailed
   }
 
   try {
     const parsed = JSON.parse(error.message)
     const message = parsed?.data?.message ?? parsed?.data?.details ?? parsed?.message
     if (typeof message === 'string') {
-      return message
+      return asDescriptor(message)
     }
   } catch {
     // Not JSON — use the raw message
   }
 
-  return error.message
+  return asDescriptor(error.message)
 }
 
 export type ChatPromptInputRef = {
@@ -162,6 +181,7 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
     },
     ref,
   ) => {
+    const { i18n, t } = useLingui()
     const navigate = useNavigate()
     const location = useLocation()
     const { openCreateItem } = useCreateItem()
@@ -179,6 +199,9 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
       selectedAgent,
       selectedModel,
     } = useCurrentChatSession()
+    // Bound to a local so the catalog placeholder is named `{agentName}` — a
+    // member expression inside a macro extracts as positional `{0}`.
+    const agentName = selectedAgent.name
 
     const { messages, status, stop, sendMessage } = useChat({
       chat: chatInstance,
@@ -435,11 +458,12 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
         let count = attachments.length
         for (const file of files) {
           if (count >= maxAttachmentCount) {
-            setAttachError(`You can attach up to ${maxAttachmentCount} files.`)
+            setAttachError(t`You can attach up to ${maxAttachmentCount} files.`)
             break
           }
           if (!isAcceptedAttachment(file)) {
-            setAttachError(`"${file.name}" isn't a supported file type.`)
+            const filename = file.name
+            setAttachError(t`"${filename}" isn't a supported file type.`)
             continue
           }
           // Shrink large images/PDFs before the cap check, so a compressible
@@ -447,7 +471,9 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
           // (THU-671). Falls back to the original when it can't help.
           const prepared = await maybeCompressAttachment(file)
           if (prepared.size > maxAttachmentBytes) {
-            setAttachError(`"${prepared.name}" is too large (max ${maxAttachmentBytes / 1024 / 1024}MB).`)
+            const maxMegabytes = maxAttachmentBytes / 1024 / 1024
+            const filename = prepared.name
+            setAttachError(t`"${filename}" is too large (max ${maxMegabytes}MB).`)
             continue
           }
           const localFileId = crypto.randomUUID()
@@ -455,7 +481,7 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
             await putAttachment({
               id: localFileId,
               filename: prepared.name,
-              mimeType: prepared.type,
+              mimeType: attachmentMimeType(prepared),
               size: prepared.size,
               createdAt: Date.now(),
               blob: prepared,
@@ -466,14 +492,18 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
             // promise reject silently — otherwise no chip appears and no banner
             // shows. Stop here: subsequent writes would hit the same failure.
             console.error('Failed to store attachment locally:', error)
-            setAttachError(`Couldn't attach "${prepared.name}" — your browser's storage is full or unavailable.`)
+            const filename = prepared.name
+            setAttachError(t`Couldn't attach "${filename}" — your browser's storage is full or unavailable.`)
             break
           }
-          setAttachments((prev) => [...prev, { localFileId, filename: prepared.name, mimeType: prepared.type }])
+          setAttachments((prev) => [
+            ...prev,
+            { localFileId, filename: prepared.name, mimeType: attachmentMimeType(prepared) },
+          ])
           count++
         }
       },
-      [attachments.length],
+      [attachments.length, t],
     )
 
     // Intercept clipboard paste (Cmd/Ctrl+V) so copied files and pasted images
@@ -552,7 +582,9 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
       (model: Model, length: number, prompt_number: number) => {
         setShowOverflowModal(true)
         trackEvent('chat_send_prompt_overflow', {
-          model,
+          model_id: model.id,
+          model_name: model.model,
+          provider: model.provider,
           length,
           prompt_number,
         })
@@ -586,7 +618,9 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
             className="flex items-center gap-2 px-3 h-[var(--touch-height-sm)] text-muted-foreground text-[length:var(--font-size-body)]"
           >
             <Loader2 className="size-[var(--icon-size-default)] shrink-0 animate-spin" />
-            <span>Connecting to {selectedAgent.name}...</span>
+            <span>
+              <Trans>Connecting to {agentName}…</Trans>
+            </span>
           </div>
         ) : isConnectionError ? (
           <div
@@ -594,8 +628,8 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
             className="flex items-center gap-2 px-3 h-[var(--touch-height-sm)] text-destructive text-[length:var(--font-size-body)]"
           >
             <AlertCircle className="size-[var(--icon-size-default)] shrink-0" />
-            <span className="truncate" title={extractErrorDisplay(connectionError)}>
-              Failed to connect to {selectedAgent.name}
+            <span className="truncate" title={i18n._(extractErrorDisplay(connectionError))}>
+              <Trans>Failed to connect to {agentName}</Trans>
             </span>
           </div>
         ) : null}
@@ -660,7 +694,9 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
           role="status"
           className="flex items-center justify-center px-4 py-3 text-muted-foreground text-[length:var(--font-size-sm)]"
         >
-          <span>This chat uses {selectedAgent.name}, which is not available on this platform.</span>
+          <span>
+            <Trans>This chat uses {agentName}, which is not available on this platform.</Trans>
+          </span>
         </div>
       )
     }
@@ -683,7 +719,7 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
           {isDragging && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-ring bg-muted/80 backdrop-blur-sm">
               <span className="text-[length:var(--font-size-sm)] font-medium text-muted-foreground">
-                Drop file to attach
+                <Trans>Drop file to attach</Trans>
               </span>
             </div>
           )}
@@ -737,7 +773,7 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
                     <button
                       type="button"
                       onClick={() => setAttachError(null)}
-                      aria-label="Dismiss"
+                      aria-label={t`Dismiss`}
                       className="shrink-0 cursor-pointer rounded p-0.5 hover:bg-destructive/15"
                     >
                       <X className="size-3.5" />
@@ -786,7 +822,7 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
               }
               setInput(value)
             }}
-            placeholder="Ask me anything..."
+            placeholder={t`Ask me anything…`}
             showSubmitButton
             onSubmit={handleSubmit}
             // Allow sending an attachment even with no typed text (matches the Enter behavior).
