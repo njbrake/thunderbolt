@@ -119,6 +119,10 @@ export const createConfigRoutes = (settings: Settings) =>
     // information, so without an operator declaration the built-in agent
     // advertises text-only and silently drops image blocks before the wire.
     visionModels: parseGatewayVisionModelIds(settings.thunderboltInferenceVisionModels),
+    // The client needs this to create a push subscription at all. Public by
+    // design — it is the key push services verify signatures against. Omitted
+    // when unset so the frontend reads "this deployment cannot notify".
+    vapidPublicKey: settings.vapidPublicKey || undefined,
     // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
     minAppVersion: settings.minAppVersion || undefined,
     defaults: {

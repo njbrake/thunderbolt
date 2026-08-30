@@ -28,7 +28,7 @@ import { startTurnRun } from './runner'
 export type CreateTurnRoutesOptions = {
   readonly auth: Auth
   readonly settings: Settings
-  readonly database: Pick<typeof db, 'select' | 'insert' | 'update'>
+  readonly database: Pick<typeof db, 'select' | 'insert' | 'update' | 'delete'>
 }
 
 /**

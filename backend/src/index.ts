@@ -37,6 +37,7 @@ import { createAccountRoutes } from '@/api/account'
 import { createAgentsRoutes } from '@/agents'
 import { createHaystackRoutes } from '@/haystack'
 import { createTurnRoutes } from '@/turns/routes'
+import { createPushRoutes } from '@/push/routes'
 import { recoverAndDrainTurnRuns } from '@/turns/boot'
 import { createConfigRoutes } from '@/api/config'
 import { createEncryptionRoutes } from '@/api/encryption'
@@ -196,6 +197,7 @@ export const createApp = async (deps?: AppDeps) => {
       .use(createAgentsRoutes(auth))
       .use(createHaystackRoutes(settings, auth, { fetchFn }))
       .use(createTurnRoutes({ auth, settings, database }))
+      .use(createPushRoutes({ auth, database }))
   )
 }
 

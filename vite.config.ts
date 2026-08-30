@@ -219,6 +219,11 @@ export default defineConfig({
         // The entry chunk alone is ~2MB; the 2MiB default would silently skip it.
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
         cleanupOutdatedCaches: true,
+        // Push handlers live in `public/push-handler.js` and are pulled in here.
+        // `generateSW` owns the worker's body, so this is the supported way to
+        // add listeners without switching to `injectManifest` and taking over
+        // maintenance of the whole file.
+        importScripts: ['/push-handler.js'],
         navigateFallback: '/index.html',
         // The API is same-origin in the compose/nginx topology, so without these
         // the navigation fallback would answer API and well-known requests with

@@ -24,6 +24,10 @@ export type AppConfig = {
    *  synced model row. Absent on a backend predating it, which reads as "no
    *  declaration" and leaves the vendor-based default in charge. */
   visionModels?: string[]
+  /** Public VAPID key for Web Push. Present only when the deployment is
+   *  configured to send notifications; absent means the app should not offer
+   *  them, since a subscription without a server key can never be delivered to. */
+  vapidPublicKey?: string
   /** Minimum semver string the server allows. Clients below this are hard-blocked
    *  until they upgrade. Absent/empty = no enforcement. */
   minAppVersion?: string
