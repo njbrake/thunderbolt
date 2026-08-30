@@ -44,6 +44,8 @@ const canServeDefaultModel = (model: SharedModel, settings: Settings): boolean =
         return !!settings.fireworksApiKey
       case 'mistral':
         return !!settings.mistralApiKey
+      case 'tinfoil':
+        return !!settings.tinfoilApiKey
       case 'thunderbolt-inference':
         return !!settings.thunderboltInferenceUrl && !!settings.thunderboltInferenceApiKey
       default:

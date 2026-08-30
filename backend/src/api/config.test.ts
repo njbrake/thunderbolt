@@ -133,9 +133,9 @@ describe('Config Routes', () => {
       const { body } = await fetchConfig(createTestSettings({ anthropicApiKey: 'sk-test' }))
       const ids = body.defaults.models.data.map((m: { model: string }) => m.model)
       // Only the Anthropic credential is set, so the Anthropic-routed model
-      // survives and the Fireworks-routed one is filtered out.
+      // survives and the Tinfoil-routed one is filtered out.
       expect(ids).toContain(bundledModelRoutedTo('anthropic'))
-      expect(ids).not.toContain(bundledModelRoutedTo('fireworks'))
+      expect(ids).not.toContain(bundledModelRoutedTo('tinfoil'))
     })
 
     // An unreachable gateway is transient; retiring every model on every client

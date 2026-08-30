@@ -30,6 +30,7 @@ import {
   getInferenceQuotaLimits,
   recordInferenceUsage,
   type InferenceDatabase,
+  type ManagedInferenceIdentity,
 } from './usage-ledger'
 import { createPriceUnavailableResponse, createQuotaExceededResponse } from './usage-responses'
 
@@ -44,12 +45,17 @@ const sanitizeMessageRoles = (messages: Message[]): Message[] =>
   messages.map((msg, i) => (i > 0 && privilegedRoles.has(msg.role) ? { ...msg, role: 'user' } : msg))
 
 type ModelConfig = {
-  provider: 'anthropic' | 'tinfoil'
+  provider: InferenceProvider
   internalName: string
   supportsStreamUsage: boolean
   /** Whether to omit `temperature` from the upstream payload. */
   omitTemperature?: boolean
 }
+
+/** Providers whose usage this backend prices and bills. Narrows to the identity
+ *  {@link checkManagedInferenceAdmission} accepts. */
+const isManagedProvider = (provider: InferenceProvider): provider is ManagedInferenceIdentity['provider'] =>
+  provider === 'anthropic' || provider === 'tinfoil'
 
 export const supportedModels: Record<string, ModelConfig> = {
   'opus-5': {
@@ -96,7 +102,6 @@ const getApiErrorMetadata = (error: unknown) => {
  */
 export const createInferenceRoutes = (options: CreateInferenceRoutesOptions) => {
   const { auth, database, fetchFn, logger, rateLimit } = options
-  const settings = getSettings()
   const nowFn = options.nowFn ?? (() => performance.now())
   const isPostHogConfiguredFn = options.isPostHogConfiguredFn ?? isPostHogConfigured
   const captureInferenceErrorFn = options.captureInferenceErrorFn ?? captureInferenceError
@@ -141,7 +146,13 @@ export const createInferenceRoutes = (options: CreateInferenceRoutesOptions) => 
       const modelConfig =
         supportedModels[body.model] ??
         (isGatewayModel(body.model, settings)
-          ? ({ provider: 'thunderbolt-inference', internalName: body.model } satisfies ModelConfig)
+          ? // Not metered, so usage is never needed; an arbitrary OpenAI-compatible
+            // gateway may also reject the `stream_options` this would add.
+            ({
+              provider: 'thunderbolt-inference',
+              internalName: body.model,
+              supportsStreamUsage: false,
+            } satisfies ModelConfig)
           : undefined)
       if (!modelConfig) {
         throw new Error('Model not found')
@@ -177,21 +188,27 @@ export const createInferenceRoutes = (options: CreateInferenceRoutesOptions) => 
         logInferenceSafely(logger, latency, 'Inference proxy latency')
       }
 
-      const admission = await checkManagedInferenceAdmission(
-        database,
-        { provider, model: internalName },
-        ctx.user.id,
-        getInferenceQuotaLimits(settings, ctx.user.isAnonymous === true),
-      )
-      if (admission.outcome === 'price-unavailable') {
+      // Quota and pricing only govern the inference this backend meters. A
+      // self-hosted gateway (`thunderbolt-inference`) serves operator-provided
+      // models that have no `inference_prices` row, so running them through
+      // admission would 503 every request on `price-unavailable`.
+      const admission = isManagedProvider(provider)
+        ? await checkManagedInferenceAdmission(
+            database,
+            { provider, model: internalName },
+            ctx.user.id,
+            getInferenceQuotaLimits(settings, ctx.user.isAnonymous === true),
+          )
+        : null
+      if (admission?.outcome === 'price-unavailable') {
         recordLatency(503, nowFn(), null)
         return createPriceUnavailableResponse()
       }
-      if (admission.outcome === 'quota-exceeded') {
+      if (admission?.outcome === 'quota-exceeded') {
         recordLatency(429, nowFn(), null)
         return createQuotaExceededResponse(admission.decision)
       }
-      const { price } = admission
+      const price = admission?.outcome === 'allowed' ? admission.price : null
 
       const usageEventId = crypto.randomUUID()
       const { client } = getClient(provider)
@@ -234,6 +251,9 @@ export const createInferenceRoutes = (options: CreateInferenceRoutesOptions) => 
               },
               'Inference usage completed',
             )
+            if (!price) {
+              return
+            }
             const outcome = await recordInferenceUsage(database, {
               id: usageEventId,
               userId: ctx.user.id,
