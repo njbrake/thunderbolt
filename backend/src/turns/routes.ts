@@ -19,6 +19,7 @@ import { parseGatewayVisionModelIds } from '@/inference/gateway-models'
 import { safeErrorHandler } from '@/middleware/error-handling'
 import { collectAssistantText, piHarnessToUiMessageStream } from '@shared/agent-core/pi-to-aisdk-stream'
 import { Elysia, t } from 'elysia'
+import { serverTurnsAvailable } from './availability'
 import { loadThread } from './history'
 import { buildServerHarness } from './harness'
 import { persistAssistantMessage } from './persist'
@@ -35,7 +36,6 @@ export type CreateTurnRoutesOptions = {
 // engine in through this file's harness import. Re-exported here because
 // callers have always found it on the routes module.
 export { serverTurnsAvailable } from './availability'
-import { serverTurnsAvailable } from './availability'
 
 export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesOptions) =>
   new Elysia({ prefix: '/turns' })
