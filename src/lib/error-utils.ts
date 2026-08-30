@@ -4,9 +4,18 @@
 
 import type { HandleError, HandleErrorCode } from '@/types/handle-errors'
 import { tinfoilUpstreamIdleTimeoutMessage, tinfoilUpstreamTimeoutMessage } from '@shared/tinfoil-proxy'
+import { z } from 'zod'
 
 const chatErrorKinds = ['attestation', 'timeout', 'rate-limit', 'provider', 'network', 'connection-lost'] as const
 export type ChatErrorKind = (typeof chatErrorKinds)[number]
+const inferenceQuotaWindowSchema = z.enum(['5h', '7d'])
+export type InferenceQuotaWindow = z.infer<typeof inferenceQuotaWindowSchema>
+const inferenceQuotaErrorSchema = z.object({
+  code: z.literal('INFERENCE_QUOTA_EXCEEDED'),
+  window: inferenceQuotaWindowSchema,
+})
+const inferenceQuotaResponseSchema = z.object({ error: inferenceQuotaErrorSchema })
+const serializedErrorSchema = z.object({ error: z.string() })
 
 const isChatErrorKind = (value: unknown): value is ChatErrorKind => chatErrorKinds.includes(value as ChatErrorKind)
 
@@ -33,6 +42,16 @@ const firstNumber = (...values: unknown[]): number | undefined =>
 const firstString = (...values: unknown[]): string | undefined =>
   values.find((value): value is string => typeof value === 'string')
 
+const getPiErrorStatusCode = (message: string): number | undefined => {
+  const jsonBodyMatch = message.match(/^(\d{3})\s+((?:\{|\[)[\s\S]*)$/)
+  const match =
+    message.match(/^(\d{3}):\s/) ??
+    message.match(/^[^(]*\((\d{3})\):/) ??
+    (jsonBodyMatch && parseJson(jsonBodyMatch[2]) !== undefined ? jsonBodyMatch : null)
+  const status = match ? Number(match[1]) : undefined
+  return status !== undefined && status >= 400 && status <= 599 ? status : undefined
+}
+
 /** Normalize raw error fields used by chat error classification. */
 const getErrorClassificationFields = (error: unknown): ErrorClassificationFields => {
   if (typeof error === 'string') {
@@ -56,8 +75,10 @@ const getErrorClassificationFields = (error: unknown): ErrorClassificationFields
  * Classification uses only normalized error name, HTTP status, and message.
  */
 export const classifyErrorKind = (error: unknown): ChatErrorKind | undefined => {
-  const { name, status, message } = getErrorClassificationFields(error)
+  const { name, status: structuredStatus, message } = getErrorClassificationFields(error)
+  const status = structuredStatus ?? (message ? getPiErrorStatusCode(message) : undefined)
   const normalizedMessage = message?.toLowerCase()
+  const isContentRejectionStatus = status === 400 || status === 422
 
   if (name === 'TinfoilAttestationTimeoutError') {
     return 'timeout'
@@ -71,7 +92,8 @@ export const classifyErrorKind = (error: unknown): ChatErrorKind | undefined => 
   if (status === 408 || (normalizedMessage && timeoutMarkers.some((marker) => normalizedMessage.includes(marker)))) {
     return 'timeout'
   }
-  if ((name && providerErrorNames.has(name)) || (status !== undefined && status >= 500)) {
+  // ChatErrorKind has no content-rejection bucket, so use its existing provider class.
+  if ((name && providerErrorNames.has(name)) || isContentRejectionStatus || (status !== undefined && status >= 500)) {
     return 'provider'
   }
   if (
@@ -124,7 +146,7 @@ export const isRateLimitError = (error?: Error | null): boolean => {
   // aiFetchStreamingResponse serializes errors as {"error":"...","status":429}
   // DefaultChatTransport may use {"error":"...","statusCode":429}
   const parsed = parseJson(error.message)
-  if (parsed?.status === 429 || parsed?.statusCode === 429) {
+  if (parsed?.status === 429 || parsed?.statusCode === 429 || getPiErrorStatusCode(error.message) === 429) {
     return true
   }
 
@@ -134,15 +156,38 @@ export const isRateLimitError = (error?: Error | null): boolean => {
 /**
  * Extract an HTTP status code from a serialized stream/transport error, if one
  * is present. The frontend serializes API errors as `{"error":...,"status":N}`
- * (see `aiFetchStreamingResponse`), which is the only place the upstream status
- * survives — the AI SDK otherwise flattens it to a bare "Bad Request".
+ * (see `aiFetchStreamingResponse`). The Pi path instead flattens errors to text
+ * through pi-ai's `formatProviderError`, using either `"<status>: <body>"` or
+ * `"<prefix> (<status>): <message>"`. Direct managed inference errors may use
+ * `"<status> <JSON body>"` instead.
  */
 export const getErrorStatusCode = (error?: Error | null): number | undefined => {
   if (!error?.message) {
     return undefined
   }
   const parsed = parseJson(error.message)
-  return firstNumber(parsed?.status, parsed?.statusCode)
+  return firstNumber(parsed?.status, parsed?.statusCode) ?? getPiErrorStatusCode(error.message)
+}
+
+/** Extract the window from a known managed-inference quota rejection. */
+export const getInferenceQuotaWindow = (error?: Error | null): InferenceQuotaWindow | undefined => {
+  if (!error?.message || getErrorStatusCode(error) !== 429) {
+    return undefined
+  }
+
+  const serializedError = parseJson(error.message)
+  const directBodyMatch = error.message.match(/^429\s+(\{[\s\S]*)$/)
+  const directBody = directBodyMatch ? parseJson(directBodyMatch[1]) : undefined
+  const directQuotaError = inferenceQuotaErrorSchema.safeParse(directBody)
+
+  if (directQuotaError.success) {
+    return directQuotaError.data.window
+  }
+
+  const serializedQuotaError = serializedErrorSchema.safeParse(serializedError)
+  const responseBody = serializedQuotaError.success ? parseJson(serializedQuotaError.data.error) : undefined
+  const nestedQuotaError = inferenceQuotaResponseSchema.safeParse(responseBody)
+  return nestedQuotaError.success ? nestedQuotaError.data.error.window : undefined
 }
 
 /**
@@ -159,7 +204,14 @@ export const getErrorRetryable = (error?: Error | null): boolean | undefined => 
     return undefined
   }
   const parsed = parseJson(error.message)
-  return typeof parsed?.isRetryable === 'boolean' ? parsed.isRetryable : undefined
+  if (typeof parsed?.isRetryable === 'boolean') {
+    return parsed.isRetryable
+  }
+
+  const status = getPiErrorStatusCode(error.message)
+  return status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 409 && status !== 429
+    ? false
+    : undefined
 }
 
 /**

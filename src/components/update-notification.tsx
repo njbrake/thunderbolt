@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import type { MessageDescriptor } from '@lingui/core'
+import { msg } from '@lingui/core/macro'
+import { Trans, useLingui } from '@lingui/react/macro'
 import { Download, RefreshCw, X, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { m, AnimatePresence } from 'framer-motion'
@@ -11,33 +14,28 @@ import { Button } from '@/components/ui/button'
 import { isDesktop } from '@/lib/platform'
 import { isServiceWorkerSupported } from '@/lib/service-worker'
 
-const statusConfig: Record<UpdateStatus, { icon: typeof Download; message: string; showActions: boolean }> = {
-  initial: { icon: CheckCircle, message: '', showActions: false },
-  idle: { icon: CheckCircle, message: '', showActions: false },
-  checking: { icon: Loader2, message: 'Checking for updates...', showActions: false },
-  available: { icon: Download, message: 'A new version is available!', showActions: true },
-  downloading: { icon: Loader2, message: 'Downloading update...', showActions: false },
-  ready: { icon: RefreshCw, message: 'Update ready! Restart to apply.', showActions: true },
-  error: { icon: AlertCircle, message: 'Update failed', showActions: true },
+const statusConfig: Record<
+  UpdateStatus,
+  { icon: typeof Download; message: MessageDescriptor | null; showActions: boolean }
+> = {
+  initial: { icon: CheckCircle, message: null, showActions: false },
+  idle: { icon: CheckCircle, message: null, showActions: false },
+  checking: { icon: Loader2, message: msg`Checking for updates…`, showActions: false },
+  available: { icon: Download, message: msg`A new version is available!`, showActions: true },
+  downloading: { icon: Loader2, message: msg`Downloading update…`, showActions: false },
+  ready: { icon: RefreshCw, message: msg`Update ready! Restart to apply.`, showActions: true },
+  error: { icon: AlertCircle, message: msg`Update failed`, showActions: true },
 }
 
 const DesktopUpdateNotification = () => {
-  const { status, update, error, downloadAndInstall, restartApp, checkForUpdates } = useDesktopUpdate()
+  const { i18n, t } = useLingui()
+  const { status, update, error, primaryAction } = useDesktopUpdate()
+  const updateVersion = update?.version ?? ''
   const [dismissed, setDismissed] = useState(false)
 
   const isVisible = !dismissed && status !== 'initial' && status !== 'idle' && status !== 'checking'
   const config = statusConfig[status]
   const Icon = config.icon
-
-  const handlePrimaryAction = async () => {
-    if (status === 'available') {
-      await downloadAndInstall()
-    } else if (status === 'ready') {
-      await restartApp()
-    } else if (status === 'error') {
-      await checkForUpdates()
-    }
-  }
 
   const handleDismiss = () => {
     setDismissed(true)
@@ -64,25 +62,27 @@ const DesktopUpdateNotification = () => {
               </div>
 
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground">{config.message}</p>
+                <p className="text-sm font-medium text-foreground">{config.message ? i18n._(config.message) : ''}</p>
 
                 {status === 'available' && update && (
-                  <p className="text-xs text-muted-foreground mt-1">Version {update.version}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    <Trans>Version {updateVersion}</Trans>
+                  </p>
                 )}
 
                 {status === 'error' && error && <p className="text-xs text-destructive mt-1">{error}</p>}
 
                 {config.showActions && (
                   <div className="flex gap-2 mt-3">
-                    <Button size="sm" onClick={handlePrimaryAction}>
-                      {status === 'available' && 'Download'}
-                      {status === 'ready' && 'Restart Now'}
-                      {status === 'error' && 'Retry'}
+                    <Button size="sm" onClick={primaryAction}>
+                      {status === 'available' && <Trans>Download</Trans>}
+                      {status === 'ready' && <Trans>Restart Now</Trans>}
+                      {status === 'error' && <Trans>Retry</Trans>}
                     </Button>
 
                     {status !== 'error' && (
                       <Button size="sm" variant="ghost" onClick={handleDismiss}>
-                        Later
+                        <Trans>Later</Trans>
                       </Button>
                     )}
                   </div>
@@ -92,7 +92,7 @@ const DesktopUpdateNotification = () => {
               <button
                 onClick={handleDismiss}
                 className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                aria-label="Dismiss"
+                aria-label={t`Dismiss`}
               >
                 <X className="size-4" />
               </button>
@@ -113,6 +113,7 @@ const DesktopUpdateNotification = () => {
  * call rather than automatic, because it discards whatever is on screen.
  */
 const WebUpdateNotification = () => {
+  const { t } = useLingui()
   const { updateAvailable, dismissed, applyUpdate, dismiss } = useWebAppUpdate()
   const [reloading, setReloading] = useState(false)
 
@@ -141,17 +142,23 @@ const WebUpdateNotification = () => {
               </div>
 
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground">A new version of Thunderbolt is available.</p>
+                <p className="text-sm font-medium text-foreground">
+                  <Trans>A new version of Thunderbolt is available.</Trans>
+                </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {reloading ? 'Reloading...' : 'Reload to get the latest features and fixes.'}
+                  {reloading ? (
+                    <Trans>Reloading...</Trans>
+                  ) : (
+                    <Trans>Reload to get the latest features and fixes.</Trans>
+                  )}
                 </p>
 
                 <div className="flex gap-2 mt-3">
                   <Button size="sm" onClick={handleReload} disabled={reloading}>
-                    Reload
+                    <Trans>Reload</Trans>
                   </Button>
                   <Button size="sm" variant="ghost" onClick={dismiss} disabled={reloading}>
-                    Later
+                    <Trans>Later</Trans>
                   </Button>
                 </div>
               </div>
@@ -160,7 +167,7 @@ const WebUpdateNotification = () => {
                 onClick={dismiss}
                 disabled={reloading}
                 className="flex-shrink-0 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                aria-label="Dismiss"
+                aria-label={t`Dismiss`}
               >
                 <X className="size-4" />
               </button>

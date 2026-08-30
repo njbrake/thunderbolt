@@ -2,6 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+import { defaultChatTitle } from '@/lib/constants'
+
 import { and, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 import type { AnyDrizzleDatabase } from '../db/database-interface'
 import { chatMessagesTable, chatThreadsTable } from '../db/tables'
@@ -60,6 +62,8 @@ export const createChatThread = async (
   db: AnyDrizzleDatabase,
   data: Pick<ChatThread, 'contextSize' | 'id' | 'title' | 'triggeredBy' | 'wasTriggeredByAutomation'> & {
     agentId?: string | null
+    /** Owning project, when the chat was started from one. */
+    projectId?: string | null
   },
   model: Model,
 ): Promise<void> => {
@@ -109,6 +113,7 @@ export const getOrCreateChatThread = async (
   id: string,
   modelId: string,
   agentId: string | null = null,
+  projectId: string | null = null,
 ): Promise<ChatThread> => {
   const thread = await getChatThread(db, id)
 
@@ -125,11 +130,12 @@ export const getOrCreateChatThread = async (
     db,
     {
       id,
-      title: 'New Chat',
+      title: defaultChatTitle,
       contextSize: null,
       triggeredBy: null,
       wasTriggeredByAutomation: 0,
       agentId,
+      projectId,
     },
     model,
   )

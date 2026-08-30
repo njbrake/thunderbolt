@@ -121,7 +121,7 @@ describe('RevokedDeviceModal', () => {
         await getClock().tickAsync(0)
       })
 
-      expect(screen.getByText('Signing out...')).toBeInTheDocument()
+      expect(screen.getByText('Signing out…')).toBeInTheDocument()
 
       await act(async () => {
         await getClock().runAllAsync()
@@ -152,7 +152,7 @@ describe('RevokedDeviceModal', () => {
         await getClock().tickAsync(0)
       })
 
-      expect(screen.getByText('Deleting...')).toBeInTheDocument()
+      expect(screen.getByText('Deleting…')).toBeInTheDocument()
 
       await act(async () => {
         await getClock().runAllAsync()
