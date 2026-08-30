@@ -53,6 +53,7 @@ const settingsSchema = z
     // serves, e.g. `llama-3.3-70b=Llama 3.3 70B,qwen-2.5-coder`. Nothing routes
     // to the gateway until at least one model is listed.
     thunderboltInferenceModels: z.string().default(''),
+    thunderboltInferenceVisionModels: z.string().default(''),
 
     // Health Check Configuration
     monitoringToken: z.string().default(''),
@@ -220,6 +221,7 @@ const parseSettings = (): Settings => {
     thunderboltInferenceUrl: process.env.THUNDERBOLT_INFERENCE_URL || '',
     thunderboltInferenceApiKey: process.env.THUNDERBOLT_INFERENCE_API_KEY || '',
     thunderboltInferenceModels: process.env.THUNDERBOLT_INFERENCE_MODELS || '',
+    thunderboltInferenceVisionModels: process.env.THUNDERBOLT_INFERENCE_VISION_MODELS || '',
     monitoringToken: process.env.MONITORING_TOKEN || '',
     googleClientId: process.env.GOOGLE_CLIENT_ID || '',
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',

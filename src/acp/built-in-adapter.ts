@@ -58,7 +58,7 @@ import type { Model, ModelProfile, ThunderboltUIMessage } from '@/types'
 import { extractLastUserText, resolveSkillTokenInstructions } from '@/skills/resolve-skill-system-messages'
 import type { PiModelDescriptor, SeedTurn } from '@shared/agent-core'
 import { appHarnessEnvironmentPrompt } from '@shared/agent-core/environment-prompt'
-import { vendorSupportsImages } from '@shared/defaults/models'
+import { modelSupportsImages } from '@/lib/model-image-support'
 import type { AgentHarness, AgentTool, ThinkingLevel } from '@earendil-works/pi-agent-core'
 import { prepareBuiltInConversation } from './built-in-conversation'
 
@@ -273,9 +273,10 @@ export const resolvePiModel = (
       reasoning: hasExplicitReasoning(profile),
       contextWindow: model.contextWindow ?? undefined,
       // Pi's openai-compat descriptor is text-only by default; without this a
-      // vision-capable hosted model (e.g. Thunderbolt Opus) has its image blocks
-      // stripped before the wire and only sees the `[Attachment: …]` text label.
-      supportsImages: vendorSupportsImages(model.vendor),
+      // vision-capable model has its image blocks stripped before the wire and
+      // only sees the `[Attachment: …]` text label. Covers both the models we
+      // host (by vendor) and a self-hosted gateway's (by operator declaration).
+      supportsImages: modelSupportsImages(model),
     },
     thinkingLevel,
   }

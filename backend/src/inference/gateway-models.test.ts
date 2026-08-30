@@ -10,6 +10,7 @@ import {
   getGatewayModelSpecs,
   getGatewaySharedModels,
   isGatewayModel,
+  parseGatewayVisionModelIds,
   parseGatewayModelSpecs,
 } from './gateway-models'
 
@@ -234,5 +235,25 @@ describe('getGatewaySharedModels', () => {
   it('gives different models different ids', async () => {
     const ids = (await discover('', ['a', 'b'])).map((model) => model.id)
     expect(new Set(ids).size).toBe(2)
+  })
+})
+
+describe('parseGatewayVisionModelIds', () => {
+  it('splits, trims and de-duplicates', () => {
+    expect(parseGatewayVisionModelIds(' homelab:qwen-vl , homelab:llava ,homelab:qwen-vl')).toEqual([
+      'homelab:qwen-vl',
+      'homelab:llava',
+    ])
+  })
+
+  it('is empty when unset, so nothing is declared image-capable by accident', () => {
+    expect(parseGatewayVisionModelIds('')).toEqual([])
+    expect(parseGatewayVisionModelIds('  ,  ,')).toEqual([])
+  })
+
+  it('reads ids verbatim, including the gateway prefixes ids often carry', () => {
+    // Declarations must match the published `model` field exactly, which for a
+    // namespaced gateway includes the prefix.
+    expect(parseGatewayVisionModelIds('homelab:qwen-vl')).toEqual(['homelab:qwen-vl'])
   })
 })
