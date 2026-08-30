@@ -124,7 +124,14 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
                 text: collector.text(),
               })
             },
-            { initial: { modelId } },
+            {
+              initial: { modelId },
+              // A reader that goes away is the expected case, not a cancellation:
+              // the phone locked. The answer's destination is `chat_messages`,
+              // which PowerSync delivers on the next connection, so the run
+              // continues and persists without anyone watching.
+              abortOnCancel: false,
+            },
           ),
           { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
         )
