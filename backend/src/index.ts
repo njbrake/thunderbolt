@@ -37,6 +37,7 @@ import { createAccountRoutes } from '@/api/account'
 import { createAgentsRoutes } from '@/agents'
 import { createHaystackRoutes } from '@/haystack'
 import { createTurnRoutes } from '@/turns/routes'
+import { recoverAndDrainTurnRuns } from '@/turns/boot'
 import { createConfigRoutes } from '@/api/config'
 import { createEncryptionRoutes } from '@/api/encryption'
 import { createPowerSyncRoutes } from '@/api/powersync'
@@ -249,6 +250,17 @@ const startServer = async () => {
           '🦊 Elysia server started',
         )
         tinfoilKeepWarm.start()
+        // A deploy can land mid-turn. Anything left `running` belonged to the
+        // process that just died, so requeue it (or give up, past the attempt
+        // cap) and start whatever is waiting. Without this a detached turn
+        // interrupted by a restart would simply never finish, and nobody would
+        // be told.
+        // Same lazy import the app uses, so booting the server never forces the
+        // database module in a context that has no DATABASE_URL.
+        void (async () => {
+          const { db } = await import('@/db/client')
+          await recoverAndDrainTurnRuns({ settings, database: db, logger: log })
+        })()
 
         if (settings.swaggerEnabled) {
           log.info(
