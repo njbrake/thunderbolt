@@ -47,13 +47,15 @@ test.describe('OIDC login flow', () => {
 })
 
 test.describe('OIDC redirect behavior', () => {
-  test('unauthenticated visit triggers OIDC flow', async ({ page }) => {
-    // Visit the app without logging in — should eventually hit the mock IdP
+  test('signing in from the sign-in page triggers the OIDC flow', async ({ page }) => {
+    // SSO mode renders a sign-in screen and starts the flow on click rather than
+    // redirecting on load, so drive the button instead of waiting on navigation.
     const responsePromise = page.waitForResponse(/\/(authorize|openid-connect\/auth)/, {
       timeout: 15_000,
     })
 
     await page.goto('/')
+    await page.getByRole('button', { name: /^sign in with/i }).click()
 
     const response = await responsePromise
     const url = new URL(response.url())

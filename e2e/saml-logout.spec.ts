@@ -19,8 +19,10 @@ test.describe('SAML logout', () => {
     await loginViaSaml(page)
     await logoutViaSidebar(page)
 
-    // Click "Sign back in" — should trigger SSO flow and re-authenticate
+    // "Sign back in" returns to `/`, which in SSO mode is the sign-in screen and
+    // waits for an explicit click rather than redirecting on its own.
     await page.getByRole('button', { name: 'Sign back in' }).click()
+    await page.getByRole('button', { name: /^sign in with/i }).click()
 
     // Should end up back in the authenticated app
     const textarea = page.locator('textarea')
