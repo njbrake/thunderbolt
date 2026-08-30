@@ -17,6 +17,9 @@ export * from './rate-limit-schema'
 // Re-export encryption schema tables (server-only, not synced via PowerSync)
 export * from './encryption-schema'
 
+// Re-export server-side turn runs (durable record of detached chat turns)
+export * from './turn-run-schema'
+
 // Re-export OTP challenge schema (session binding for OTP verification)
 export * from './otp-challenge-schema'
 

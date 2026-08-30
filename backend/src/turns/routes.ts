@@ -22,11 +22,13 @@ import { Elysia, t } from 'elysia'
 import { loadThread } from './history'
 import { buildServerHarness } from './harness'
 import { persistAssistantMessage } from './persist'
+import { createTurnRun } from './store'
+import { startTurnRun } from './runner'
 
 export type CreateTurnRoutesOptions = {
   readonly auth: Auth
   readonly settings: Settings
-  readonly database: Pick<typeof db, 'select' | 'insert'>
+  readonly database: Pick<typeof db, 'select' | 'insert' | 'update'>
 }
 
 /**
@@ -60,6 +62,38 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
 
         const { threadId, modelId, prompt } = ctx.body
         const { history, tailMessageId } = await loadThread(database, ctx.user.id, threadId)
+
+        // Detached: record the turn, start it, and return. The answer arrives as
+        // a `chat_messages` row that PowerSync replicates whenever the device
+        // next connects, so the caller is free to disappear immediately.
+        if (ctx.body.detach) {
+          const run = await createTurnRun(database, {
+            userId: ctx.user.id,
+            chatThreadId: threadId,
+            modelId,
+            prompt,
+            parentMessageId: tailMessageId,
+          })
+          startTurnRun(
+            { settings, database },
+            {
+              id: run.id,
+              userId: ctx.user.id,
+              chatThreadId: threadId,
+              modelId,
+              prompt,
+              parentMessageId: tailMessageId,
+              assistantMessageId: run.assistantMessageId,
+              state: 'queued',
+              error: null,
+              attempts: 0,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+          )
+          ctx.set.status = 202
+          return { turnRunId: run.id, assistantMessageId: run.assistantMessageId }
+        }
 
         const harness = await buildServerHarness({
           model: {
@@ -116,6 +150,9 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
           modelId: t.String({ minLength: 1 }),
           prompt: t.String({ minLength: 1 }),
           systemPrompt: t.Optional(t.String()),
+          /** Run without holding this request open. The answer is delivered
+           *  through sync rather than through the response body. */
+          detach: t.Optional(t.Boolean()),
         }),
       },
     )
