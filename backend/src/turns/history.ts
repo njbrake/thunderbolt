@@ -91,17 +91,27 @@ export const orderByParentChain = (rows: readonly Row[]): Row[] => {
   return chain.reverse()
 }
 
+/** A thread reduced to what running a turn against it needs. */
+export type LoadedThread = {
+  /** Prior turns, oldest first, ready to seed a harness. */
+  readonly history: SeedTurn[]
+  /** Id of the newest message on the active branch, or `null` for an empty
+   *  thread. The assistant message a turn produces hangs off this one, which is
+   *  what keeps the thread a single chain rather than a fan of orphans. */
+  readonly tailMessageId: string | null
+}
+
 /**
- * Load a thread's conversation as ordered seed turns.
+ * Load a thread's conversation and the id its next message should descend from.
  *
  * Scoped to `userId` as well as the thread so a thread id from a request can
  * never read another account's messages.
  */
-export const loadThreadHistory = async (
+export const loadThread = async (
   database: TurnHistoryDatabase,
   userId: string,
   threadId: string,
-): Promise<SeedTurn[]> => {
+): Promise<LoadedThread> => {
   const rows = await database
     .select({
       id: chatMessagesTable.id,
@@ -119,8 +129,12 @@ export const loadThreadHistory = async (
       ),
     )
 
-  return orderByParentChain(rows)
-    .filter((row): row is Row & { role: 'user' | 'assistant' } => row.role === 'user' || row.role === 'assistant')
-    .map((row) => ({ role: row.role, text: messageText(row) }))
-    .filter((turn) => turn.text.length > 0)
+  const ordered = orderByParentChain(rows)
+  return {
+    history: ordered
+      .filter((row): row is Row & { role: 'user' | 'assistant' } => row.role === 'user' || row.role === 'assistant')
+      .map((row) => ({ role: row.role, text: messageText(row) }))
+      .filter((turn) => turn.text.length > 0),
+    tailMessageId: ordered.at(-1)?.id ?? null,
+  }
 }

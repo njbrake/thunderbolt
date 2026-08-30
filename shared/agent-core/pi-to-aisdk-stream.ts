@@ -322,6 +322,49 @@ const createPiTranslator = (emit: (chunk: AiSdkChunk) => void, metadata: PiStrea
   return { handle, finish }
 }
 
+/** A running collection of the assistant text produced by one harness run. */
+export type AssistantTextCollector = {
+  /** Text emitted so far, concatenated in order. */
+  readonly text: () => string
+  /** Stop listening. Safe to call more than once. */
+  readonly stop: () => void
+}
+
+/**
+ * Collect the assistant's text for a run alongside whatever else consumes it.
+ *
+ * Deliberately routed through the same {@link createPiTranslator} the stream
+ * uses rather than reading harness events directly: what gets persisted is then
+ * the same text the reader saw, by construction. Deriving it separately would
+ * let the stored message and the streamed one drift apart on any event the two
+ * paths interpreted differently.
+ *
+ * Only text is collected. Tool calls and reasoning are part of how an answer was
+ * reached, not the answer, and the stored message carries the answer.
+ *
+ * @param harness - the harness to observe; subscribe before starting the run
+ * @returns a handle exposing the text so far and an unsubscribe
+ */
+export const collectAssistantText = (
+  harness: AgentHarness,
+  metadata: PiStreamMetadata = {},
+): AssistantTextCollector => {
+  let text = ''
+  const translator = createPiTranslator((chunk) => {
+    if (chunk.type === 'text-delta') {
+      text += chunk.delta
+    }
+  }, metadata)
+  let unsubscribe: (() => void) | null = harness.subscribe((event) => translator.handle(event))
+  return {
+    text: () => text,
+    stop: () => {
+      unsubscribe?.()
+      unsubscribe = null
+    },
+  }
+}
+
 /**
  * Subscribes to a Pi {@link AgentHarness} run and produces the AI SDK UI message
  * stream the app's chat transport expects. The harness's own lifecycle events

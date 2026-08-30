@@ -17,15 +17,16 @@ import type { Settings } from '@/config/settings'
 import type { db } from '@/db/client'
 import { parseGatewayVisionModelIds } from '@/inference/gateway-models'
 import { safeErrorHandler } from '@/middleware/error-handling'
-import { piHarnessToUiMessageStream } from '@shared/agent-core/pi-to-aisdk-stream'
+import { collectAssistantText, piHarnessToUiMessageStream } from '@shared/agent-core/pi-to-aisdk-stream'
 import { Elysia, t } from 'elysia'
-import { loadThreadHistory } from './history'
+import { loadThread } from './history'
 import { buildServerHarness } from './harness'
+import { persistAssistantMessage } from './persist'
 
 export type CreateTurnRoutesOptions = {
   readonly auth: Auth
   readonly settings: Settings
-  readonly database: Pick<typeof db, 'select'>
+  readonly database: Pick<typeof db, 'select' | 'insert'>
 }
 
 /**
@@ -58,7 +59,7 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
         }
 
         const { threadId, modelId, prompt } = ctx.body
-        const history = await loadThreadHistory(database, ctx.user.id, threadId)
+        const { history, tailMessageId } = await loadThread(database, ctx.user.id, threadId)
 
         const harness = await buildServerHarness({
           model: {
@@ -79,12 +80,29 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
           history,
         })
 
+        // Subscribed before the run so no early delta is missed.
+        const collector = collectAssistantText(harness)
+
         return new Response(
           piHarnessToUiMessageStream(
             harness,
             async () => {
-              await harness.prompt(prompt)
-              await harness.waitForIdle()
+              try {
+                await harness.prompt(prompt)
+                await harness.waitForIdle()
+              } finally {
+                collector.stop()
+              }
+              // Inside the run, so the stream does not report done until the
+              // answer is durable. A reader that sees the end of the stream can
+              // rely on the message being in the thread.
+              await persistAssistantMessage(database, {
+                userId: ctx.user.id,
+                threadId,
+                modelId,
+                parentId: tailMessageId,
+                text: collector.text(),
+              })
             },
             { initial: { modelId } },
           ),
