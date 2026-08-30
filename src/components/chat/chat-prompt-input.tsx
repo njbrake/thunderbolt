@@ -48,7 +48,7 @@ import { buildQuotePart } from '@/lib/quotes'
 import { QuoteChip } from './quote-chip'
 import { deleteAttachment, putAttachment } from '@/lib/file-blob-storage'
 import { resolveTextMimeType } from '@/files/transformers'
-import { maybeCompressAttachment } from '@/files/compress/compress-attachment'
+import { prepareAttachment } from '@/files/compress/compress-attachment'
 import { VoiceModeButton } from '@/voice/ui/voice-mode-button'
 import { VoiceModeComposer } from '@/voice/ui/voice-mode-composer'
 import { useVoiceSession } from '@/voice/ui/use-voice-session'
@@ -61,13 +61,18 @@ const maxAttachmentCount = 10
 
 /** Mime types accepted as attachments. PDFs and images deliver natively to
  *  capable models; plain-text types (txt / md / csv / json) deliver as text;
- *  docx (and a native file a model rejects) auto-remediate to text/images. */
+ *  docx (and a native file a model rejects) auto-remediate to text/images.
+ *  HEIC/HEIF are accepted but never stored as-is: `prepareAttachment` re-encodes
+ *  them to WebP, since no model reads the container and iPhones shoot it by
+ *  default. */
 const acceptedAttachmentMimeTypes = new Set([
   'application/pdf',
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
+  'image/heic',
+  'image/heif',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'text/markdown',
   'text/plain',
@@ -84,6 +89,8 @@ const acceptedAttachmentExtensions = [
   '.jpeg',
   '.webp',
   '.gif',
+  '.heic',
+  '.heif',
   '.docx',
   '.md',
   '.markdown',
@@ -466,10 +473,18 @@ export const ChatPromptInput = forwardRef<ChatPromptInputRef, ChatPromptInputPro
             setAttachError(t`"${filename}" isn't a supported file type.`)
             continue
           }
-          // Shrink large images/PDFs before the cap check, so a compressible
-          // photo over the limit can slip under it instead of being rejected
-          // (THU-671). Falls back to the original when it can't help.
-          const prepared = await maybeCompressAttachment(file)
+          // Convert containers no model reads (HEIC/HEIF) and shrink large
+          // images/PDFs, both before the cap check so a compressible photo over
+          // the limit can slip under it instead of being rejected (THU-671).
+          const result = await prepareAttachment(file)
+          if (!result.ok) {
+            const filename = file.name
+            setAttachError(
+              t`Couldn't read "${filename}". This browser can't convert HEIC photos — Safari can, or export the photo as JPEG first.`,
+            )
+            continue
+          }
+          const prepared = result.file
           if (prepared.size > maxAttachmentBytes) {
             const maxMegabytes = maxAttachmentBytes / 1024 / 1024
             const filename = prepared.name

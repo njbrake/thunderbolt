@@ -1004,6 +1004,10 @@ msgstr "Couldn't load this app's pairing identity: {error}"
 msgid "Couldn't pin {name}."
 msgstr "Couldn't pin {name}."
 
+#: src/components/chat/chat-prompt-input.tsx
+msgid "Couldn't read \"{filename}\". This browser can't convert HEIC photos — Safari can, or export the photo as JPEG first."
+msgstr "Couldn't read \"{filename}\". This browser can't convert HEIC photos — Safari can, or export the photo as JPEG first."
+
 #: src/settings/app-version-section.tsx
 #~ msgid "Couldn't restart to apply the update"
 #~ msgstr "Couldn't restart to apply the update"
