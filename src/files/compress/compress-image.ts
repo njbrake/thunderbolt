@@ -64,15 +64,42 @@ const toWebp = async (blob: Blob): Promise<Blob> => {
 }
 
 /**
- * Downscale (to {@link maxDimension}) and re-encode a raster image to WebP.
- * Returns the compressed blob when it's actually smaller than the original,
- * otherwise `null` so the caller keeps the original bytes. May throw on a
- * decode/encode failure — the caller treats that as "couldn't compress" and
- * falls back to the original.
+ * Normalize a raster image to WebP when it exceeds either budget, else `null` so
+ * the caller keeps the original bytes.
+ *
+ * Two budgets, because they are not the same question:
+ *
+ * - **Pixels**, always enforced ({@link maxDimension}). A phone photo is a few MB
+ *   on disk and around 12 megapixels to a vision encoder, and it is the second
+ *   number that decides whether a model can read it. Gating this on file size is
+ *   what let full-resolution photos reach an upstream that then stalled in
+ *   prefill and returned no stream at all.
+ * - **Bytes**, only when `maxBytes` is supplied. That is a storage-and-transfer
+ *   concern the caller owns.
+ *
+ * An image inside both budgets is returned untouched rather than round-tripped:
+ * re-encoding is lossy, and a screenshot of text would lose exactly the detail a
+ * model is usually being asked to read.
+ *
+ * May throw on a decode/encode failure; the caller treats that as "couldn't
+ * compress" and falls back to the original.
  */
-export const compressImage = async (blob: Blob): Promise<Blob | null> => {
-  const out = await toWebp(blob)
-  return out.size < blob.size ? out : null
+export const compressImage = async (blob: Blob, maxBytes = Number.POSITIVE_INFINITY): Promise<Blob | null> => {
+  const bitmap = await createImageBitmap(blob, { imageOrientation: 'from-image' })
+  try {
+    const { width, height } = scaledSize(bitmap)
+    const overDimension = width !== bitmap.width || height !== bitmap.height
+    if (!overDimension && blob.size <= maxBytes) {
+      return null
+    }
+    const out = await encodeWebp(bitmap, width, height)
+    // A downscale is about pixel count, so keep it even in the rare case the
+    // re-encode is not smaller on disk. A byte-only pass keeps the original when
+    // it failed to win anything.
+    return overDimension || out.size < blob.size ? out : null
+  } finally {
+    bitmap.close()
+  }
 }
 
 /**

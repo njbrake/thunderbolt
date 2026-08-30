@@ -30,12 +30,36 @@ const deps = (over: Partial<CompressDeps> = {}): CompressDeps => ({
 })
 
 describe('maybeCompressAttachment', () => {
-  test('returns files at or below the threshold untouched, without invoking a compressor', async () => {
+  test('leaves a non-image at or below the threshold untouched, without invoking a compressor', async () => {
     const d = deps()
-    const file = fakeFile('small.png', 'image/png', compressionThresholdBytes)
+    const file = fakeFile('notes.pdf', 'application/pdf', compressionThresholdBytes)
     expect(await maybeCompressAttachment(file, d)).toBe(file)
-    expect(d.compressImage).not.toHaveBeenCalled()
     expect(d.compressPdf).not.toHaveBeenCalled()
+    expect(d.compressImage).not.toHaveBeenCalled()
+  })
+
+  test('inspects an image below the threshold, since its binding limit is pixels not bytes', async () => {
+    // The regression this guards: a few-MB phone photo is far under the byte
+    // threshold and far over the model's pixel budget, and used to go upstream
+    // at full resolution.
+    const d = deps({ compressImage: mock(async () => smallerBlob(2048, 'image/webp')) })
+    const result = await maybeCompressAttachment(fakeFile('IMG_0042.jpg', 'image/jpeg', 3 * 1024 * 1024), d)
+    expect(d.compressImage).toHaveBeenCalledTimes(1)
+    expect(result.type).toBe('image/webp')
+    expect(result.name).toBe('IMG_0042.webp')
+  })
+
+  test('passes its byte budget down so the compressor can apply both limits', async () => {
+    const d = deps()
+    await maybeCompressAttachment(fakeFile('small.png', 'image/png', 1024), d)
+    expect(d.compressImage).toHaveBeenCalledWith(expect.anything(), compressionThresholdBytes)
+  })
+
+  test('keeps the original when the compressor declines (already inside both budgets)', async () => {
+    const d = deps({ compressImage: mock(async () => null) })
+    const file = fakeFile('screenshot.png', 'image/png', 200 * 1024)
+    // A lossless screenshot must not be round-tripped through a lossy encoder.
+    expect(await maybeCompressAttachment(file, d)).toBe(file)
   })
 
   test('compresses a large image to WebP and renames the extension', async () => {

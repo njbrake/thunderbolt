@@ -9,7 +9,9 @@
  * the type. Everything falls back to the original bytes untouched.
  *
  * Scope:
- * - Raster images (png/jpeg/webp) → downscale + re-encode to WebP.
+ * - Raster images (png/jpeg/webp) → downscale + re-encode to WebP. Checked at
+ *   *any* file size, because their binding limit is the model's pixel budget
+ *   rather than the byte threshold below.
  * - HEIC/HEIF → always re-encoded to WebP regardless of size (see
  *   {@link prepareAttachment}); no model accepts the container.
  * - GIF → skipped: canvas re-encoding would flatten animation to one frame.
@@ -56,13 +58,14 @@ export const needsTranscode = (file: File): boolean =>
 /** Injectable so the orchestrator's routing/fallback logic is unit-testable
  *  without a canvas or pdf-lib in the test environment. */
 export type CompressDeps = {
-  compressImage: (blob: Blob) => Promise<Blob | null>
+  /** `maxBytes` is the caller's byte budget; the pixel budget is always enforced. */
+  compressImage: (blob: Blob, maxBytes?: number) => Promise<Blob | null>
   compressPdf: (blob: Blob) => Promise<Blob | null>
   transcodeImage: (blob: Blob) => Promise<Blob>
 }
 
 const defaultDeps: CompressDeps = {
-  compressImage: async (blob) => (await import('./compress-image')).compressImage(blob),
+  compressImage: async (blob, maxBytes) => (await import('./compress-image')).compressImage(blob, maxBytes),
   compressPdf: async (blob) => (await import('./compress-pdf')).compressPdf(blob),
   transcodeImage: async (blob) => (await import('./compress-image')).transcodeImage(blob),
 }
@@ -80,16 +83,19 @@ const withExtension = (name: string, ext: string): string => {
  * failure is swallowed in favour of the original — best-effort by design.
  */
 export const maybeCompressAttachment = async (file: File, deps: CompressDeps = defaultDeps): Promise<File> => {
-  if (file.size <= compressionThresholdBytes) {
-    return file
-  }
-
   try {
+    // Images are inspected at any size. A phone photo sits comfortably under the
+    // byte threshold while being far too many pixels to send, so gating this on
+    // `file.size` silently shipped full-resolution photos upstream.
+    // `compressImage` returns null when the image is inside both budgets, so a
+    // small screenshot is never round-tripped through a lossy encoder.
     if (isCompressibleImage(file)) {
-      const compressed = await deps.compressImage(file)
+      const compressed = await deps.compressImage(file, compressionThresholdBytes)
       return compressed ? new File([compressed], withExtension(file.name, 'webp'), { type: 'image/webp' }) : file
     }
-    if (isPdf(file)) {
+    // Byte-driven, so it stays behind the threshold: re-saving a small PDF buys
+    // nothing and risks its fidelity.
+    if (file.size > compressionThresholdBytes && isPdf(file)) {
       const compressed = await deps.compressPdf(file)
       return compressed ? new File([compressed], file.name, { type: 'application/pdf' }) : file
     }
