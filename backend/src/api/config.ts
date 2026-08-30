@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import type { Settings } from '@/config/settings'
-import { ensureGatewayModels, getGatewaySharedModels } from '@/inference/gateway-models'
+import { ensureGatewayModels, getGatewaySharedModels, parseGatewayVisionModelIds } from '@/inference/gateway-models'
 import { supportedModels } from '@/inference/routes'
 import { safeErrorHandler } from '@/middleware/error-handling'
 import { getWebCapabilities } from '@/web/providers'
@@ -112,6 +112,13 @@ export const createConfigRoutes = (settings: Settings) =>
     // reach for it mid-answer and the tool call would fail, which reads as a broken
     // app rather than one without web access.
     ...getWebCapabilities(settings),
+    // Model ids this deployment's gateway can accept images for. A deployment
+    // capability, not user data, so it rides `/config` beside the tool flags
+    // rather than becoming a synced column on every model row. The frontend
+    // needs it because an OpenAI-compatible gateway advertises no modality
+    // information, so without an operator declaration the built-in agent
+    // advertises text-only and silently drops image blocks before the wire.
+    visionModels: parseGatewayVisionModelIds(settings.thunderboltInferenceVisionModels),
     // Omit when unset so the frontend treats it as "no enforcement" without parsing an empty string as semver.
     minAppVersion: settings.minAppVersion || undefined,
     defaults: {

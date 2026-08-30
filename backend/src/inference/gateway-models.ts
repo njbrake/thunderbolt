@@ -76,6 +76,29 @@ export const parseGatewayModelSpecs = (raw: string): GatewayModelSpec[] => {
     })
 }
 
+/**
+ * Parse `THUNDERBOLT_INFERENCE_VISION_MODELS`: a comma-separated list of gateway
+ * model ids that accept image input.
+ *
+ * Deliberately its own variable rather than a flag inside
+ * `THUNDERBOLT_INFERENCE_MODELS`. That one is an *optional* allowlist — leaving
+ * it empty exposes everything the gateway advertises — so a capability encoded
+ * inside its entries could only be declared by operators who also wanted to
+ * restrict their lineup. These are orthogonal choices and get orthogonal knobs.
+ *
+ * The operator is the only party that can answer this: an OpenAI-compatible
+ * `/models` response carries no modality information, and guessing wrong means
+ * either silently dropping images or sending a payload the upstream rejects.
+ */
+export const parseGatewayVisionModelIds = (raw: string): string[] => [
+  ...new Set(
+    raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  ),
+]
+
 /** Settings this module reads. Passed explicitly rather than pulled from
  *  `getSettings()` so the config route stays injectable, matching the
  *  `getCorsOriginsList(settings)` style helpers in `@/config/settings`. */

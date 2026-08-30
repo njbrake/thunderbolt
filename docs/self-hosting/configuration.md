@@ -71,6 +71,7 @@ Set any subset; the app exposes each provider whose key is present.
 | `THUNDERBOLT_INFERENCE_URL`      | Custom OpenAI-compatible inference endpoint          |
 | `THUNDERBOLT_INFERENCE_API_KEY`  | Key for the custom inference endpoint                |
 | `THUNDERBOLT_INFERENCE_MODELS`   | Optional allowlist / labels for that endpoint         |
+| `THUNDERBOLT_INFERENCE_VISION_MODELS` | Ids from that endpoint that accept image input   |
 
 User-level keys (e.g. OpenAI, OpenRouter) are configured in the app itself, not as backend env vars. For local inference, point `THUNDERBOLT_INFERENCE_URL` at an Ollama or llama.cpp server.
 
@@ -88,6 +89,18 @@ Everything the endpoint advertises shows up in the model picker, with no client 
 needed. Discovery is cached for five minutes and refreshed when the app fetches
 `/config`, so adding a model upstream needs no redeploy. If the endpoint is unreachable
 its models are simply omitted; the built-in models keep working.
+
+`THUNDERBOLT_INFERENCE_VISION_MODELS` is a separate comma-separated list of ids that
+accept image input, e.g. `THUNDERBOLT_INFERENCE_VISION_MODELS=qwen2.5-vl,llava`. It is
+its own variable rather than a flag inside the list below because that list is an
+*optional* allowlist: leaving it empty exposes everything the gateway advertises, and
+declaring a capability should not force you to also restrict your lineup.
+
+Declare it or images are dropped. An OpenAI-compatible `/models` response carries no
+modality information, so an undeclared model is advertised to the agent as text-only and
+its image blocks are stripped before the request leaves the browser; the model then
+receives only an `[Attachment: photo.jpg]` label and appears to ignore the picture. Ids
+must match what the gateway reports, prefixes included.
 
 `THUNDERBOLT_INFERENCE_MODELS` is optional and does two things when set: it restricts
 which discovered models are exposed, and it supplies display names. Same

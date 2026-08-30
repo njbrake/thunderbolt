@@ -18,6 +18,12 @@ export type AppConfig = {
   /** Whether the backend has a provider behind `fetch_content`. Absent on a backend
    *  predating the split, where `webSearchEnabled` governed both. */
   webFetchEnabled?: boolean
+  /** Model ids this deployment can accept image input for, declared by the
+   *  operator via `THUNDERBOLT_INFERENCE_VISION_MODELS`. A deployment
+   *  capability rather than user data, so it lives here instead of on the
+   *  synced model row. Absent on a backend predating it, which reads as "no
+   *  declaration" and leaves the vendor-based default in charge. */
+  visionModels?: string[]
   /** Minimum semver string the server allows. Clients below this are hard-blocked
    *  until they upgrade. Absent/empty = no enforcement. */
   minAppVersion?: string
