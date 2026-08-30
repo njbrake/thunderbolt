@@ -453,6 +453,13 @@ jobs:
           restore-keys: |
             backend-bun-
 
+      # The backend type-checks files under ../shared, and Node resolution walks up
+      # from the importing file — a module in shared/ can only see the ROOT
+      # node_modules, never backend/node_modules. shared/agent-core imports the Pi
+      # packages, so without this the backend type-check fails to resolve them.
+      - name: Install root dependencies (resolves shared/'s imports)
+        run: bun install --frozen-lockfile
+
       - name: Install backend dependencies
         run: |
           cd backend
