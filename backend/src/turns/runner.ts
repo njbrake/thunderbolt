@@ -19,7 +19,7 @@ import { collectAssistantText } from '@shared/agent-core/pi-to-aisdk-stream'
 import { buildServerHarness } from './harness'
 import { loadThread } from './history'
 import { persistAssistantMessage } from './persist'
-import { claimQueuedRuns, markFailed, markRunning, markSucceeded } from './store'
+import { claimQueuedRuns, claimRun, markFailed, markSucceeded } from './store'
 
 type TurnRunRow = typeof turnRuns.$inferSelect
 
@@ -38,7 +38,12 @@ export type TurnRunnerDeps = {
  */
 export const executeTurnRun = async (deps: TurnRunnerDeps, run: TurnRunRow): Promise<void> => {
   const { settings, database, logger } = deps
-  await markRunning(database, run.id)
+  if (!(await claimRun(database, run.id))) {
+    // Someone else got there first, or the run is no longer queued. Standing
+    // down is the correct response: the other holder will finish it.
+    logger?.info({ event: 'turn_run_not_claimed', runId: run.id }, 'Turn run already claimed elsewhere')
+    return
+  }
 
   try {
     const { history } = await loadThread(database, run.userId, run.chatThreadId)

@@ -74,23 +74,9 @@ export const createTurnRoutes = ({ auth, settings, database }: CreateTurnRoutesO
             prompt,
             parentMessageId: tailMessageId,
           })
-          startTurnRun(
-            { settings, database },
-            {
-              id: run.id,
-              userId: ctx.user.id,
-              chatThreadId: threadId,
-              modelId,
-              prompt,
-              parentMessageId: tailMessageId,
-              assistantMessageId: run.assistantMessageId,
-              state: 'queued',
-              error: null,
-              attempts: 0,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            },
-          )
+          // The inserted row itself, so the runner can never disagree with what
+          // is actually in the table.
+          startTurnRun({ settings, database }, run)
           ctx.set.status = 202
           return { turnRunId: run.id, assistantMessageId: run.assistantMessageId }
         }

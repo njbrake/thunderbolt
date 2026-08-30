@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it, mock } from 'bun:test'
-import { maxTurnAttempts, recoverInterruptedRuns, type TurnStoreDatabase } from './store'
+import { claimRun, maxTurnAttempts, recoverInterruptedRuns, type TurnStoreDatabase } from './store'
 
 type Stranded = { id: string; attempts: number }
 
@@ -78,5 +78,22 @@ describe('recoverInterruptedRuns', () => {
     const failed = updates.find((u) => u.state === 'failed')
     expect(failed).toBeDefined()
     expect(String(failed!.error)).toContain('server restarted')
+  })
+})
+
+describe('claimRun', () => {
+  /** `update` yields whatever the caller says the CAS matched. */
+  const claimDatabase = (matched: { id: string }[]) =>
+    ({
+      update: () => ({ set: () => ({ where: () => ({ returning: async () => matched }) }) }),
+    }) as unknown as TurnStoreDatabase
+
+  it('claims a run when the compare-and-set matches', async () => {
+    expect(await claimRun(claimDatabase([{ id: 'a' }]), 'a')).toBe(true)
+  })
+
+  it('stands down when another process already claimed it', async () => {
+    // Two processes draining the queue at once must not both spend the tokens.
+    expect(await claimRun(claimDatabase([]), 'a')).toBe(false)
   })
 })

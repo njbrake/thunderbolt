@@ -12,7 +12,7 @@
 
 import type { db } from '@/db/client'
 import { turnRuns, type TurnRunState } from '@/db/turn-run-schema'
-import { eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import { v7 as uuidv7 } from 'uuid'
 
 export type TurnStoreDatabase = Pick<typeof db, 'insert' | 'update' | 'select'>
@@ -34,10 +34,8 @@ export type CreateTurnRunInput = {
   readonly parentMessageId: string | null
 }
 
-export type TurnRunRecord = {
-  readonly id: string
-  readonly assistantMessageId: string
-}
+/** The inserted row, so callers never synthesize one that can drift from it. */
+export type TurnRunRecord = typeof turnRuns.$inferSelect
 
 /**
  * Record a turn as queued.
@@ -46,19 +44,23 @@ export type TurnRunRecord = {
  * overwrites its own answer instead of appending a second one to the thread.
  */
 export const createTurnRun = async (database: TurnStoreDatabase, input: CreateTurnRunInput): Promise<TurnRunRecord> => {
-  const id = uuidv7()
-  const assistantMessageId = uuidv7()
-  await database.insert(turnRuns).values({
-    id,
-    userId: input.userId,
-    chatThreadId: input.chatThreadId,
-    modelId: input.modelId,
-    prompt: input.prompt,
-    parentMessageId: input.parentMessageId,
-    assistantMessageId,
-    state: 'queued',
-  })
-  return { id, assistantMessageId }
+  const [row] = await database
+    .insert(turnRuns)
+    .values({
+      id: uuidv7(),
+      userId: input.userId,
+      chatThreadId: input.chatThreadId,
+      modelId: input.modelId,
+      prompt: input.prompt,
+      parentMessageId: input.parentMessageId,
+      assistantMessageId: uuidv7(),
+      state: 'queued',
+    })
+    .returning()
+  if (!row) {
+    throw new Error('turn run insert returned no row')
+  }
+  return row
 }
 
 /** Move a run to a terminal or in-flight state. */
@@ -74,12 +76,24 @@ const setState = async (
     .where(eq(turnRuns.id, id))
 }
 
-/** Claim a queued run and count the attempt. */
-export const markRunning = async (database: TurnStoreDatabase, id: string): Promise<void> => {
-  await database
+/**
+ * Claim a queued run, counting the attempt.
+ *
+ * The state predicate makes this a compare-and-set rather than a blind write, so
+ * two processes draining the queue at once cannot both take the same run: the
+ * second update matches nothing and the caller stands down. The idempotent
+ * message write means a double-run would have overwritten rather than duplicated
+ * the answer, but it would still have spent the tokens twice.
+ *
+ * @returns whether this caller now owns the run
+ */
+export const claimRun = async (database: TurnStoreDatabase, id: string): Promise<boolean> => {
+  const claimed = await database
     .update(turnRuns)
     .set({ state: 'running', attempts: sql`${turnRuns.attempts} + 1`, updatedAt: new Date() })
-    .where(eq(turnRuns.id, id))
+    .where(and(eq(turnRuns.id, id), eq(turnRuns.state, 'queued')))
+    .returning()
+  return claimed.length > 0
 }
 
 export const markSucceeded = (database: TurnStoreDatabase, id: string): Promise<void> =>
