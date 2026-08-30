@@ -29,5 +29,11 @@ export {
 export { ensureBufferPolyfill } from './ensure-buffer.ts'
 export { toPiAgentTools } from './mcp-tools.ts'
 export type { SeedTurn } from './seed-history.ts'
-export { piHarnessToUiMessageStream, type AiSdkChunk, type PiStreamMetadata } from './pi-to-aisdk-stream.ts'
+export {
+  collectAssistantText,
+  piHarnessToUiMessageStream,
+  type AiSdkChunk,
+  type AssistantTextCollector,
+  type PiStreamMetadata,
+} from './pi-to-aisdk-stream.ts'
 export { BrowserExecutionEnv, mountAgentFs, mountInMemoryFs, type MountedBackend } from './browser-env/index.ts'
