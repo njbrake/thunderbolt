@@ -72,15 +72,20 @@ export const runTurnOnServer = async (httpClient: HttpClient, request: ServerTur
     return null
   }
 
-  const response = await httpClient.post('turns', {
-    json: { threadId: request.threadId, modelId: request.modelId, prompt, history },
-  })
-
-  // 501 is the deployment saying it will not run turns. Anything else that is
-  // not a stream is equally unusable here, and the in-tab path is a working
-  // answer rather than a consolation.
-  if (!response.ok || !response.body) {
+  try {
+    const response = await httpClient.post('turns', {
+      json: { threadId: request.threadId, modelId: request.modelId, prompt, history },
+    })
+    // A 2xx with nothing to read is not usable as a turn.
+    return response.body ? response : null
+  } catch (error) {
+    // `HttpClient` throws on any non-2xx, so this is the path a 501 takes — the
+    // deployment saying it will not run turns, which is an ordinary answer to
+    // ask and not a failure. A network blip lands here too, and the response is
+    // the same: this is a fallback boundary, so nothing above needs to know the
+    // handoff was attempted. Letting it throw would fail the user's send over a
+    // turn the browser can run perfectly well itself.
+    console.warn('Server declined the turn; running it in this tab instead', error)
     return null
   }
-  return response
 }

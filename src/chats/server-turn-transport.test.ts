@@ -52,9 +52,24 @@ describe('runTurnOnServer', () => {
   })
 
   test('declines rather than throwing when the server will not run it', async () => {
-    // A 501 means the deployment stopped offering server turns since the client
-    // cached its config; answering in the tab is a working answer.
-    const httpClient = client({ ok: false, status: 501 })
+    // `HttpClient` throws on any non-2xx, so a 501 arrives as an exception, not
+    // as a response to inspect. Letting it escape would fail the user's send
+    // over a turn this tab can run perfectly well.
+    const httpClient = {
+      post: mock(async () => {
+        throw new Error('HttpError: 501')
+      }),
+    } as unknown as HttpClient
+    const result = await runTurnOnServer(httpClient, { threadId: 't', modelId: 'm', messages: [message('user', 'hi')] })
+    expect(result).toBeNull()
+  })
+
+  test('declines when the network fails outright', async () => {
+    const httpClient = {
+      post: mock(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    } as unknown as HttpClient
     const result = await runTurnOnServer(httpClient, { threadId: 't', modelId: 'm', messages: [message('user', 'hi')] })
     expect(result).toBeNull()
   })
